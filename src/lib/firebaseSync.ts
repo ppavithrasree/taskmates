@@ -79,11 +79,25 @@ export const firebaseChangePassword = async (password: string) => {
   return true;
 };
 
+const stripUndefined = (value: unknown): unknown => {
+  if (Array.isArray(value)) {
+    return value.map(stripUndefined).filter((item) => item !== undefined);
+  }
+  if (value && typeof value === "object") {
+    return Object.entries(value as Record<string, unknown>).reduce<Record<string, unknown>>((acc, [key, val]) => {
+      const cleaned = stripUndefined(val);
+      if (cleaned !== undefined) acc[key] = cleaned;
+      return acc;
+    }, {});
+  }
+  return value === undefined ? undefined : value;
+};
+
 const cleanPayload = (payload: unknown) => {
   const record = { ...(payload as Record<string, unknown>) };
   delete record.dirty;
   delete record.passwordHash;
-  return record;
+  return stripUndefined(record) as Record<string, unknown>;
 };
 
 export const pushSyncOperation = async (operation: SyncOperation) => {

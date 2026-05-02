@@ -61,7 +61,7 @@ const emptyState = (): AppState => ({
   recentSearches: [],
   coverageAlerts: [],
   syncQueue: [],
-  settings: { theme: "light" },
+  settings: { theme: "dark" },
 });
 
 const seed = (): AppState => {
@@ -90,7 +90,7 @@ const seed = (): AppState => {
     recentSearches: [],
     coverageAlerts: [],
     syncQueue: [],
-    settings: { theme: "light" },
+    settings: { theme: "dark" },
   };
 };
 
@@ -131,7 +131,7 @@ const load = (): AppState => {
       hasFirebaseConfig &&
       parsed.users.length > 0 &&
       parsed.users.every((user) => ["u_aria", "u_maya", "u_julian"].includes(user.id));
-    return isDemoOnly ? { ...emptyState(), settings: parsed.settings ?? { theme: "light" } } : parsed;
+    return isDemoOnly ? { ...emptyState(), settings: parsed.settings ?? { theme: "dark" } } : parsed;
   } catch {
     return seed();
   }
