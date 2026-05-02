@@ -112,6 +112,21 @@
 
   body {
     @apply bg-background text-foreground;
+    background-image: var(--gradient-mesh);
+    background-attachment: fixed;
+    transition: background-color 0.25s ease, color 0.25s ease;
+  }
+
+  input[type="date"]::-webkit-calendar-picker-indicator,
+  input[type="datetime-local"]::-webkit-calendar-picker-indicator {
+    cursor: pointer;
+    filter: invert(42%) sepia(72%) saturate(870%) hue-rotate(142deg) brightness(88%) contrast(92%);
+    opacity: 0.95;
+  }
+
+  .dark input[type="date"]::-webkit-calendar-picker-indicator,
+  .dark input[type="datetime-local"]::-webkit-calendar-picker-indicator {
+    filter: invert(78%) sepia(45%) saturate(737%) hue-rotate(135deg) brightness(101%) contrast(92%);
   }
 }
 
@@ -149,5 +164,17 @@
 
   .transition-smooth {
     transition: var(--transition-smooth);
+  }
+
+  .color-band {
+    background-image: linear-gradient(135deg, hsl(var(--primary-soft)), hsl(var(--accent-soft)), hsl(var(--success-soft)));
+  }
+
+  .dark .color-band {
+    background-image: linear-gradient(135deg, hsl(var(--primary-soft)), hsl(var(--accent-soft)), hsl(145 40% 16%));
+  }
+
+  .tap-lift {
+    @apply transition-smooth active:scale-[0.98];
   }
 }

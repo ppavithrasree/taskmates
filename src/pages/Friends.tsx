@@ -1,101 +1,96 @@
-import { useMemo, useState } from "react";
-import { Search, Users } from "lucide-react";
+import { ReactNode, useMemo, useState } from "react";
+import { Check, Clock, Search, UserPlus, X } from "lucide-react";
+import { toast } from "sonner";
 import { AppShell } from "@/components/layout/AppShell";
-import { FriendCard } from "@/features/friends/FriendCard";
 import { useApp } from "@/context/AppContext";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
 const Friends = () => {
-  const { currentUser, searchUsers, requests, users, getFriends } = useApp();
+  const { currentUser, users, connections, recentSearches, searchUsers, rememberSearch, sendRequest, respondRequest, getConnections, getConnectionStatus } = useApp();
   const [query, setQuery] = useState("");
-
   const results = useMemo(() => searchUsers(query), [query, searchUsers]);
-  const incoming = currentUser
-    ? requests.filter((request) => request.toId === currentUser.id && request.status === "pending")
-    : [];
-  const outgoing = currentUser
-    ? requests.filter((request) => request.fromId === currentUser.id && request.status === "pending")
-    : [];
-  const friends = currentUser ? getFriends(currentUser.id) : [];
 
   if (!currentUser) return null;
+  const incoming = connections.filter((connection) => connection.receiverId === currentUser.id && connection.status === "pending");
+  const people = getConnections(currentUser.id);
+
+  const request = (id: string, username: string) => {
+    sendRequest(id);
+    rememberSearch(username);
+    toast.success("Connection request queued.");
+  };
 
   return (
-    <AppShell title="Friends">
-      <div className="mx-auto max-w-3xl space-y-8 px-4 py-6 sm:px-6 sm:py-8">
-        <header>
-          <p className="text-sm text-muted-foreground">Your accountability circle</p>
-          <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">Friends</h1>
-        </header>
-
-        <section className="space-y-4">
+    <AppShell title="Search">
+      <div className="mx-auto max-w-3xl space-y-6 px-4 py-5">
+        <section className="space-y-3">
           <div className="relative">
-            <Search className="absolute left-4 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search by username"
-              className="h-12 rounded-full bg-card pl-11 shadow-soft"
-            />
+            <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search username..." className="h-12 rounded-lg bg-card pl-10 shadow-soft" />
           </div>
-
           {query.trim() && (
-            <div className="space-y-3">
-              {results.length === 0 ? (
-                <p className="px-2 text-sm text-muted-foreground">No users match "{query}".</p>
-              ) : (
-                results.map((user) => <FriendCard key={user.id} user={user} context="search" />)
-              )}
+            <div className="space-y-2">
+              {results.length === 0 ? <p className="px-1 text-sm text-muted-foreground">No prefix matches.</p> : results.map((user) => {
+                const status = getConnectionStatus(user.id);
+                return (
+                  <PersonRow key={user.id} username={user.username} meta={status} action={
+                    status === "none" ? <Button size="sm" onClick={() => request(user.id, user.username)}><UserPlus className="mr-1 size-4" /> Add</Button> : null
+                  } />
+                );
+              })}
+            </div>
+          )}
+          {!query.trim() && recentSearches.length > 0 && (
+            <div className="space-y-2">
+              <h2 className="text-sm font-bold">Recent searches</h2>
+              {recentSearches.map((item) => <PersonRow key={item.username} username={item.username} meta="recent" />)}
             </div>
           )}
         </section>
 
         {incoming.length > 0 && (
-          <section className="space-y-3">
-            <h2 className="flex items-center gap-2 text-xl font-bold">
-              Requests
-              <span className="flex h-6 min-w-6 items-center justify-center rounded-full bg-accent px-2 text-xs font-bold text-accent-foreground">
-                {incoming.length}
-              </span>
-            </h2>
-            {incoming.map((request) => {
-              const user = users.find((candidate) => candidate.id === request.fromId);
-              return user ? <FriendCard key={request.id} user={user} requestId={request.id} context="incoming" /> : null;
+          <section className="space-y-2">
+            <h2 className="text-xl font-black">Requests</h2>
+            {incoming.map((connection) => {
+              const sender = users.find((user) => user.id === connection.senderId);
+              if (!sender) return null;
+              return (
+                <PersonRow key={connection.id} username={sender.username} meta="pending" action={
+                  <div className="flex gap-1">
+                    <Button size="icon" variant="outline" onClick={() => respondRequest(connection.id, true)}><Check className="size-4" /></Button>
+                    <Button size="icon" variant="outline" onClick={() => respondRequest(connection.id, false)}><X className="size-4" /></Button>
+                  </div>
+                } />
+              );
             })}
           </section>
         )}
 
-        <section className="space-y-3">
-          <h2 className="text-xl font-bold">
-            Your friends <span className="text-sm font-medium text-muted-foreground">- {friends.length}</span>
-          </h2>
-          {friends.length === 0 ? (
-            <div className="rounded-lg border border-dashed border-border bg-card p-10 text-center">
-              <div className="mx-auto mb-4 flex size-12 items-center justify-center rounded-lg bg-accent-soft text-accent">
-                <Users className="size-5" />
-              </div>
-              <p className="font-semibold">No friends yet</p>
-              <p className="mt-1 text-sm text-muted-foreground">
-                Search above to find someone to connect with.
-              </p>
-            </div>
+        <section className="space-y-2">
+          <h2 className="text-xl font-black">Connections</h2>
+          {people.length === 0 ? (
+            <div className="rounded-lg border border-dashed border-border bg-card p-8 text-center text-sm text-muted-foreground">No accepted connections yet.</div>
           ) : (
-            friends.map((user) => <FriendCard key={user.id} user={user} context="friend" />)
+            people.map((user) => <PersonRow key={user.id} username={user.username} meta="connected" />)
           )}
         </section>
-
-        {outgoing.length > 0 && (
-          <section className="space-y-3">
-            <h2 className="text-xl font-bold">Awaiting reply</h2>
-            {outgoing.map((request) => {
-              const user = users.find((candidate) => candidate.id === request.toId);
-              return user ? <FriendCard key={request.id} user={user} context="outgoing" /> : null;
-            })}
-          </section>
-        )}
       </div>
     </AppShell>
   );
 };
+
+const PersonRow = ({ username, meta, action }: { username: string; meta: string; action?: ReactNode }) => (
+  <div className="tap-lift flex items-center justify-between gap-3 rounded-lg border border-border bg-card p-3 shadow-soft">
+    <div className="flex min-w-0 items-center gap-3">
+      <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-accent-soft font-black text-accent">{username.charAt(0).toUpperCase()}</div>
+      <div className="min-w-0">
+        <p className="truncate font-bold">{username}</p>
+        <p className="flex items-center gap-1 text-xs text-muted-foreground"><Clock className="size-3" /> {meta}</p>
+      </div>
+    </div>
+    {action}
+  </div>
+);
 
 export default Friends;

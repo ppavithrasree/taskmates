@@ -1,167 +1,93 @@
 import { useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 import { toast } from "sonner";
-import { CheckCircle2, Flame, Users } from "lucide-react";
+import { KeyRound, Shield, Timer } from "lucide-react";
 import { AppShell } from "@/components/layout/AppShell";
-import { TaskCard } from "@/features/tasks/TaskCard";
+import { PostCard } from "@/features/posts/PostCard";
 import { useApp } from "@/context/AppContext";
-import { taskStats } from "@/lib/stats";
+import { activityStats } from "@/lib/timeCoverage";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
 
 const Profile = () => {
   const { username } = useParams();
-  const { currentUser, users, tasks, getFriends, updateProfile } = useApp();
-
-  const target = username ? users.find((user) => user.username === username.toLowerCase()) : currentUser;
-  const isOwn = !!currentUser && !!target && target.id === currentUser.id;
-  const [editing, setEditing] = useState(false);
-  const [bio, setBio] = useState(target?.bio ?? "");
-
-  const userTasks = useMemo(
-    () =>
-      target
-        ? tasks
-            .filter((task) => task.authorId === target.id)
-            .sort((a, b) => b.completedAt - a.completedAt)
-        : [],
-    [tasks, target]
+  const { currentUser, users, posts, changePassword } = useApp();
+  const [password, setPassword] = useState("");
+  const target = currentUser ? (username ? users.find((user) => user.username === username.toLowerCase()) : currentUser) : undefined;
+  const isOwn = Boolean(currentUser && target?.id === currentUser.id);
+  const visiblePosts = useMemo(
+    () => target ? posts.filter((post) => post.userId === target.id && !post.deletedAt).sort((a, b) => b.startTime - a.startTime) : [],
+    [posts, target]
   );
-
-  const visibleTasks = useMemo(() => {
-    if (!target || !currentUser) return [];
-    if (isOwn) return userTasks;
-
-    const viewerIsFriend = getFriends(target.id).some((friend) => friend.id === currentUser.id);
-
-    return userTasks.filter((task) => {
-      if (task.visibility === "private") return false;
-      if (task.visibility === "public") return viewerIsFriend;
-      if (task.visibility === "custom") return (task.customFriendIds ?? []).includes(currentUser.id);
-      return false;
-    });
-  }, [userTasks, target, currentUser, isOwn, getFriends]);
+  const cutoff = target ? Date.now() - target.retentionDays * 86_400_000 : 0;
+  const retained = visiblePosts.filter((post) => post.endTime >= cutoff);
+  const stats = activityStats(retained);
 
   if (!currentUser) return null;
 
   if (!target) {
-    return (
-      <AppShell title="Profile">
-        <main className="mx-auto max-w-2xl px-6 py-20 text-center">
-          <h1 className="mb-2 text-2xl font-bold">User not found</h1>
-          <p className="text-muted-foreground">No one with that username exists in this demo.</p>
-        </main>
-      </AppShell>
-    );
+    return <AppShell title="Profile"><div className="px-4 py-20 text-center">User not found.</div></AppShell>;
   }
 
-  const friends = getFriends(target.id);
-  const stats = taskStats(userTasks);
-
-  const saveProfile = () => {
-    updateProfile({ bio: bio.trim() });
-    setEditing(false);
-    toast.success("Profile updated.");
+  const savePassword = () => {
+    const result = changePassword(password);
+    if (!result.ok) toast.error(result.error);
+    else {
+      toast.success("Password changed locally.");
+      setPassword("");
+    }
   };
 
   return (
     <AppShell title="Profile">
-      <div className="mx-auto max-w-3xl px-4 py-6 sm:px-6 sm:py-8">
-        <section className="mb-6 overflow-hidden rounded-lg border border-border bg-card p-6 shadow-soft sm:p-8">
-          <div className="flex items-start gap-5">
-            <div className="flex size-20 shrink-0 items-center justify-center rounded-lg bg-gradient-primary text-3xl font-bold text-primary-foreground shadow-glow sm:size-24">
-              {target.username.charAt(0).toUpperCase()}
+      <div className="mx-auto max-w-3xl space-y-5 px-4 py-5">
+        <section className="rounded-lg border border-border bg-card p-5 shadow-soft">
+          <div className="flex items-start gap-4">
+            <div className="flex size-16 shrink-0 items-center justify-center rounded-lg bg-gradient-primary text-2xl font-black text-primary-foreground">{target.username.charAt(0).toUpperCase()}</div>
+            <div className="min-w-0">
+              <h1 className="truncate text-2xl font-black">{target.username}</h1>
+              <p className="truncate text-sm text-muted-foreground">{target.email}</p>
+              <div className="mt-3 flex flex-wrap gap-2 text-xs font-bold">
+                <span className="rounded-full bg-primary-soft px-2 py-1 text-primary">{stats.total} retained posts</span>
+                <span className="rounded-full bg-success-soft px-2 py-1 text-success">{target.retentionDays} day retention</span>
+              </div>
             </div>
-            <div className="min-w-0 flex-1">
-              <h1 className="text-2xl font-bold capitalize tracking-tight sm:text-3xl">{target.username}</h1>
-              {!editing && (
-                <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
-                  {target.bio || (isOwn ? "Add a short bio for your profile." : "No bio yet.")}
-                </p>
-              )}
-
-              {editing && (
-                <div className="mt-3 space-y-2">
-                  <Textarea
-                    value={bio}
-                    onChange={(event) => setBio(event.target.value)}
-                    rows={3}
-                    maxLength={200}
-                    className="rounded-lg bg-background"
-                    placeholder="A short line about how you work."
-                  />
-                  <div className="flex gap-2">
-                    <Button size="sm" className="rounded-full" onClick={saveProfile}>
-                      Save
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="rounded-full"
-                      onClick={() => {
-                        setBio(target.bio ?? "");
-                        setEditing(false);
-                      }}
-                    >
-                      Cancel
-                    </Button>
-                  </div>
-                </div>
-              )}
-
-              {isOwn && !editing && (
-                <Button variant="outline" size="sm" className="mt-3 rounded-full" onClick={() => setEditing(true)}>
-                  Edit profile
-                </Button>
-              )}
-            </div>
-          </div>
-
-          <div className="mt-7 grid grid-cols-3 gap-3 border-t border-border pt-6">
-            <ProfileStat label="Tasks" value={stats.total} icon={CheckCircle2} tone="success" />
-            <ProfileStat label="Friends" value={friends.length} icon={Users} tone="accent" />
-            <ProfileStat label="Streak" value={stats.streak} icon={Flame} tone="primary" />
           </div>
         </section>
 
-        <h2 className="mb-4 text-xl font-bold">{isOwn ? "Your task history" : "Recent activity"}</h2>
-        <div className="space-y-4">
-          {visibleTasks.length === 0 ? (
-            <div className="rounded-lg border border-dashed border-border bg-card p-10 text-center text-sm text-muted-foreground">
-              Nothing to show yet.
+        {isOwn && (
+          <section className="rounded-lg border border-border bg-card p-4 shadow-soft">
+            <h2 className="mb-3 flex items-center gap-2 font-black"><KeyRound className="size-4 text-primary" /> Change password</h2>
+            <div className="flex gap-2">
+              <Input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="New password" className="bg-background" />
+              <Button onClick={savePassword}>Save</Button>
             </div>
+          </section>
+        )}
+
+        <section className="grid grid-cols-2 gap-3">
+          <Info icon={Timer} label="Today coverage" value={`${stats.coveragePercent}%`} />
+          <Info icon={Shield} label="Privacy" value={target.privacy} />
+        </section>
+
+        <section className="space-y-3">
+          <h2 className="text-xl font-black">{isOwn ? "Your retained posts" : "Posts"}</h2>
+          {retained.length === 0 ? (
+            <div className="rounded-lg border border-dashed border-border bg-card p-8 text-center text-sm text-muted-foreground">No retained posts.</div>
           ) : (
-            visibleTasks.map((task) => <TaskCard key={task.id} task={task} />)
+            retained.map((post) => <PostCard key={post.id} post={post} />)
           )}
-        </div>
+        </section>
       </div>
     </AppShell>
   );
 };
 
-const toneClasses = {
-  primary: "bg-primary-soft text-primary",
-  accent: "bg-accent-soft text-accent",
-  success: "bg-success-soft text-success",
-} as const;
-
-const ProfileStat = ({
-  label,
-  value,
-  icon: Icon,
-  tone,
-}: {
-  label: string;
-  value: number;
-  icon: typeof CheckCircle2;
-  tone: keyof typeof toneClasses;
-}) => (
-  <div className="text-center">
-    <div className={`mx-auto mb-2 flex size-9 items-center justify-center rounded-lg ${toneClasses[tone]}`}>
-      <Icon className="size-4" />
-    </div>
-    <div className="text-2xl font-bold tabular-nums">{value}</div>
-    <div className="text-[11px] font-medium text-muted-foreground">{label}</div>
+const Info = ({ icon: Icon, label, value }: { icon: typeof Timer; label: string; value: string }) => (
+  <div className="rounded-lg border border-border bg-card p-4 shadow-soft">
+    <Icon className="mb-2 size-4 text-accent" />
+    <p className="text-xl font-black capitalize">{value}</p>
+    <p className="text-xs text-muted-foreground">{label}</p>
   </div>
 );
 

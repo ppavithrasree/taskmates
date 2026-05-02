@@ -1,0 +1,92 @@
+import { useState } from "react";
+import { Link } from "react-router-dom";
+import { Clock3, Globe2, Pencil, Trash2, Users } from "lucide-react";
+import { toast } from "sonner";
+import type { Post, Visibility } from "@/types";
+import { useApp } from "@/context/AppContext";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { PostForm } from "./PostForm";
+
+const visibility: Record<Visibility, { label: string; icon: typeof Globe2; classes: string }> = {
+  public: { label: "Public", icon: Globe2, classes: "bg-primary-soft text-primary" },
+  connections: { label: "Connections", icon: Users, classes: "bg-success-soft text-success" },
+  custom: { label: "Custom", icon: Users, classes: "bg-accent-soft text-accent" },
+};
+
+const rangeLabel = (start: number, end: number) =>
+  `${new Date(start).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })} - ${new Date(end).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
+
+export const PostCard = ({ post }: { post: Post }) => {
+  const { currentUser, users, deletePost } = useApp();
+  const [editOpen, setEditOpen] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const author = users.find((user) => user.id === post.userId);
+  const isMine = currentUser?.id === post.userId;
+  const meta = visibility[post.visibility ?? author?.privacy ?? "public"];
+  const Icon = meta.icon;
+
+  return (
+    <article className="tap-lift animate-fade-in-up rounded-lg border border-border bg-card p-4 shadow-soft transition-smooth hover:-translate-y-0.5 hover:shadow-soft-lg">
+      <header className="mb-4 flex items-start justify-between gap-3">
+        <Link to={author ? `/profile/${author.username}` : "#"} className="flex min-w-0 items-center gap-3">
+          <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-gradient-primary font-bold text-primary-foreground">
+            {author?.username.charAt(0).toUpperCase()}
+          </div>
+          <div className="min-w-0">
+            <p className="truncate text-sm font-semibold">{author?.username ?? "unknown"}</p>
+            <p className="truncate text-xs text-muted-foreground">{new Date(post.startTime).toLocaleDateString()}</p>
+          </div>
+        </Link>
+        <span className={`inline-flex shrink-0 items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-bold uppercase ${meta.classes}`}>
+          <Icon className="size-3" />
+          {meta.label}
+        </span>
+      </header>
+
+      <div className="mb-3 flex items-center gap-2 rounded-lg bg-muted px-3 py-2 text-sm font-semibold">
+        <Clock3 className="size-4 text-primary" />
+        {rangeLabel(post.startTime, post.endTime)}
+      </div>
+      <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">{post.content}</p>
+
+      {isMine && (
+        <footer className="mt-4 flex gap-1 border-t border-border pt-3">
+          <Button size="sm" variant="ghost" onClick={() => setEditOpen(true)}><Pencil className="mr-1 size-3.5" /> Edit</Button>
+          <Button size="sm" variant="ghost" className="text-destructive hover:text-destructive" onClick={() => setConfirmOpen(true)}><Trash2 className="mr-1 size-3.5" /> Delete</Button>
+        </footer>
+      )}
+
+      <Dialog open={editOpen} onOpenChange={setEditOpen}>
+        <DialogContent className="rounded-lg">
+          <DialogHeader><DialogTitle>Edit activity</DialogTitle></DialogHeader>
+          <PostForm initial={post} onClose={() => setEditOpen(false)} onSaved={() => setEditOpen(false)} />
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <AlertDialogContent className="rounded-lg">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this activity?</AlertDialogTitle>
+            <AlertDialogDescription>It disappears locally now and syncs the deletion when online.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => {
+                deletePost(post.id);
+                toast.success("Activity deleted.");
+              }}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </article>
+  );
+};
+
+export default PostCard;
