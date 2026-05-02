@@ -81,9 +81,12 @@ export const firebaseChangePassword = async (password: string) => {
 
 const stripUndefined = (value: unknown): unknown => {
   if (Array.isArray(value)) {
-    return value.map(stripUndefined).filter((item) => item !== undefined);
+    return value.map((item) => {
+      const cleaned = stripUndefined(item);
+      return cleaned === undefined ? null : cleaned;
+    });
   }
-  if (value && typeof value === "object") {
+  if (value !== null && typeof value === "object") {
     return Object.entries(value as Record<string, unknown>).reduce<Record<string, unknown>>((acc, [key, val]) => {
       const cleaned = stripUndefined(val);
       if (cleaned !== undefined) acc[key] = cleaned;
