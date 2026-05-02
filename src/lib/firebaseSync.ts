@@ -90,7 +90,7 @@ const stripUndefined = (value: unknown): unknown => {
       return acc;
     }, {});
   }
-  return value === undefined ? undefined : value;
+  return value;
 };
 
 const cleanPayload = (payload: unknown) => {
