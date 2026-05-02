@@ -79,12 +79,15 @@ export const firebaseChangePassword = async (password: string) => {
   return true;
 };
 
+/**
+ * Recursively removes undefined values so Firestore writes do not fail.
+ * Arrays are treated as unordered lists, so undefined entries are dropped.
+ * @param value - The value to sanitize.
+ * @returns A copy of the value with undefined entries removed.
+ */
 const stripUndefined = (value: unknown): unknown => {
   if (Array.isArray(value)) {
-    return value.map((item) => {
-      const cleaned = stripUndefined(item);
-      return cleaned === undefined ? null : cleaned;
-    });
+    return value.map(stripUndefined).filter((item) => item !== undefined);
   }
   if (value !== null && typeof value === "object") {
     return Object.entries(value as Record<string, unknown>).reduce<Record<string, unknown>>((acc, [key, val]) => {
