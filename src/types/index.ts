@@ -10,6 +10,7 @@ export interface User {
   privacy: Visibility;
   customUsernames: string[];
   retentionDays: number;
+  theme?: "light" | "dark";
   createdAt: number;
   updatedAt: number;
   passwordHash?: string;
@@ -36,11 +37,6 @@ export interface Connection {
   status: ConnectionStatus;
   createdAt: number;
   updatedAt: number;
-}
-
-export interface RecentSearch {
-  username: string;
-  searchedAt: number;
 }
 
 export interface CoverageAlert {
@@ -76,7 +72,6 @@ export interface AppState {
   users: User[];
   posts: Post[];
   connections: Connection[];
-  recentSearches: RecentSearch[];
   coverageAlerts: CoverageAlert[];
   syncQueue: SyncOperation[];
   settings: AppSettings;

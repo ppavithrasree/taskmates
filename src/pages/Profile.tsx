@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 import { toast } from "sonner";
-import { KeyRound, Shield, Timer } from "lucide-react";
+import { KeyRound, Shield, Timer, Users } from "lucide-react";
 import { AppShell } from "@/components/layout/AppShell";
 import { PostCard } from "@/features/posts/PostCard";
 import { useApp } from "@/context/AppContext";
@@ -65,9 +65,10 @@ const Profile = () => {
           </section>
         )}
 
-        <section className="grid grid-cols-2 gap-3">
+        <section className="grid grid-cols-3 gap-3">
           <Info icon={Timer} label="Today coverage" value={`${stats.coveragePercent}%`} />
           <Info icon={Shield} label="Privacy" value={target.privacy} />
+          <Info icon={Users} label="Connections" value={`${target.connections.length}`} />
         </section>
 
         <section className="space-y-3">

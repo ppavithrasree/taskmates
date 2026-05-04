@@ -1,5 +1,5 @@
 import { ReactNode, useMemo, useState } from "react";
-import { Check, Clock, Search, UserPlus, X } from "lucide-react";
+import { CheckCircle2, Inbox, Search, Send, Trash2, UserRound, UsersRound, UserPlus, X } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/components/layout/AppShell";
 import { useApp } from "@/context/AppContext";
@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
 const Friends = () => {
-  const { currentUser, users, connections, recentSearches, searchUsers, rememberSearch, sendRequest, respondRequest, getConnections, getConnectionStatus } = useApp();
+  const { currentUser, users, connections, searchUsers, sendRequest, respondRequest, deleteConnection, getConnections, getConnectionStatus } = useApp();
   const [query, setQuery] = useState("");
   const results = useMemo(() => searchUsers(query), [query, searchUsers]);
 
@@ -15,10 +15,13 @@ const Friends = () => {
   const incoming = connections.filter((connection) => connection.receiverId === currentUser.id && connection.status === "pending");
   const people = getConnections(currentUser.id);
 
-  const request = (id: string, username: string) => {
+  const request = (id: string) => {
     sendRequest(id);
-    rememberSearch(username);
     toast.success("Connection request queued.");
+  };
+
+  const removeConnection = (userId: string) => {
+    deleteConnection(userId);
   };
 
   return (
@@ -31,20 +34,29 @@ const Friends = () => {
           </div>
           {query.trim() && (
             <div className="space-y-2">
-              {results.length === 0 ? <p className="px-1 text-sm text-muted-foreground">No prefix matches.</p> : results.map((user) => {
-                const status = getConnectionStatus(user.id);
-                return (
-                  <PersonRow key={user.id} username={user.username} meta={status} action={
-                    status === "none" ? <Button size="sm" onClick={() => request(user.id, user.username)}><UserPlus className="mr-1 size-4" /> Add</Button> : null
-                  } />
-                );
-              })}
-            </div>
-          )}
-          {!query.trim() && recentSearches.length > 0 && (
-            <div className="space-y-2">
-              <h2 className="text-sm font-bold">Recent searches</h2>
-              {recentSearches.map((item) => <PersonRow key={item.username} username={item.username} meta="recent" />)}
+              {results.length === 0 ? (
+                <p className="px-1 text-sm text-muted-foreground">No available users to connect with.</p>
+              ) : (
+                results.map((user) => {
+                  const status = getConnectionStatus(user.id);
+                  const mutualCount = currentUser.connections.filter((id) => user.connections.includes(id)).length;
+                  return (
+                    <PersonRow
+                      key={user.id}
+                      username={user.username}
+                      status={status}
+                      mutualCount={mutualCount}
+                      action={
+                        status === "none" ? (
+                          <Button size="sm" onClick={() => request(user.id)}>
+                            <UserPlus className="mr-1 size-4" /> Add
+                          </Button>
+                        ) : null
+                      }
+                    />
+                  );
+                })
+              )}
             </div>
           )}
         </section>
@@ -56,23 +68,47 @@ const Friends = () => {
               const sender = users.find((user) => user.id === connection.senderId);
               if (!sender) return null;
               return (
-                <PersonRow key={connection.id} username={sender.username} meta="pending" action={
-                  <div className="flex gap-1">
-                    <Button size="icon" variant="outline" onClick={() => respondRequest(connection.id, true)}><Check className="size-4" /></Button>
-                    <Button size="icon" variant="outline" onClick={() => respondRequest(connection.id, false)}><X className="size-4" /></Button>
-                  </div>
-                } />
+                <PersonRow
+                  key={connection.id}
+                  username={sender.username}
+                  status="incoming"
+                  mutualCount={sender.connections.filter((id) => currentUser.connections.includes(id)).length}
+                  action={
+                    <div className="flex gap-1">
+                      <Button size="icon" variant="outline" onClick={() => respondRequest(connection.id, true)}>
+                        <CheckCircle2 className="size-4" />
+                      </Button>
+                      <Button size="icon" variant="outline" onClick={() => respondRequest(connection.id, false)}>
+                        <X className="size-4" />
+                      </Button>
+                    </div>
+                  }
+                />
               );
             })}
           </section>
         )}
 
         <section className="space-y-2">
-          <h2 className="text-xl font-black">Connections</h2>
+          <h2 className="text-xl font-black">Connections ({people.length})</h2>
           {people.length === 0 ? (
-            <div className="rounded-lg border border-dashed border-border bg-card p-8 text-center text-sm text-muted-foreground">No accepted connections yet.</div>
+            <div className="rounded-lg border border-dashed border-border bg-card p-8 text-center text-sm text-muted-foreground">
+              No accepted connections yet.
+            </div>
           ) : (
-            people.map((user) => <PersonRow key={user.id} username={user.username} meta="connected" />)
+            people.map((user) => (
+              <PersonRow
+                key={user.id}
+                username={user.username}
+                status="connected"
+                mutualCount={currentUser.connections.filter((id) => user.connections.includes(id)).length}
+                action={
+                  <Button size="sm" variant="destructive" onClick={() => removeConnection(user.id)}>
+                    <Trash2 className="mr-1 size-4" /> Remove
+                  </Button>
+                }
+              />
+            ))
           )}
         </section>
       </div>
@@ -80,17 +116,45 @@ const Friends = () => {
   );
 };
 
-const PersonRow = ({ username, meta, action }: { username: string; meta: string; action?: ReactNode }) => (
-  <div className="tap-lift flex items-center justify-between gap-3 rounded-lg border border-border bg-card p-3 shadow-soft">
-    <div className="flex min-w-0 items-center gap-3">
-      <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-accent-soft font-black text-accent">{username.charAt(0).toUpperCase()}</div>
-      <div className="min-w-0">
-        <p className="truncate font-bold">{username}</p>
-        <p className="flex items-center gap-1 text-xs text-muted-foreground"><Clock className="size-3" /> {meta}</p>
+const statusMeta = {
+  self: { label: "You", icon: UserRound, tone: "text-primary" },
+  connected: { label: "Connected", icon: CheckCircle2, tone: "text-success" },
+  incoming: { label: "Incoming request", icon: Inbox, tone: "text-accent" },
+  outgoing: { label: "Pending request", icon: Send, tone: "text-accent" },
+  none: { label: "", icon: UsersRound, tone: "text-muted-foreground" },
+} as const;
+
+const PersonRow = ({
+  username,
+  status,
+  mutualCount = 0,
+  action,
+}: {
+  username: string;
+  status: keyof typeof statusMeta;
+  mutualCount?: number;
+  action?: ReactNode;
+}) => {
+  const meta = statusMeta[status];
+  const Icon = meta.icon;
+
+  return (
+    <div className="tap-lift flex items-center justify-between gap-3 rounded-lg border border-border bg-card p-3 shadow-soft">
+      <div className="flex min-w-0 items-center gap-3">
+        <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-accent-soft font-black text-accent">
+          {username.charAt(0).toUpperCase()}
+        </div>
+        <div className="min-w-0">
+          <p className="truncate font-bold">{username}</p>
+          <div className="flex items-center gap-1 text-xs text-muted-foreground">
+            <Icon className={`size-3 ${meta.tone}`} />
+            <span>{status === "none" ? `${mutualCount} mutual${mutualCount === 1 ? "" : "s"}` : meta.label}</span>
+          </div>
+        </div>
       </div>
+      {action}
     </div>
-    {action}
-  </div>
-);
+  );
+};
 
 export default Friends;

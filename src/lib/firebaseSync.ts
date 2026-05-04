@@ -1,5 +1,5 @@
 import type { FirebaseApp, FirebaseOptions } from "firebase/app";
-import type { Auth } from "firebase/auth";
+import type { Auth, User as FirebaseAuthUser } from "firebase/auth";
 import type { Firestore, Unsubscribe } from "firebase/firestore";
 import type { Connection, FirebaseConfig, Post, SyncOperation, User } from "@/types";
 
@@ -68,7 +68,7 @@ export const firebaseGetUser = async (userId: string) => {
   if (!services) return null;
   const { doc, getDoc } = await import("firebase/firestore");
   const snapshot = await getDoc(doc(services.db, "users", userId));
-  return snapshot.exists() ? snapshot.data() as User : null;
+  return snapshot.exists() ? normalizeEntity<User>(snapshot.id, snapshot.data()) : null;
 };
 
 export const firebaseChangePassword = async (password: string) => {
@@ -79,12 +79,27 @@ export const firebaseChangePassword = async (password: string) => {
   return true;
 };
 
-/**
- * Recursively removes undefined values so Firestore writes do not fail.
- * Arrays are treated as unordered lists, so undefined entries are dropped.
- * @param value - The value to sanitize.
- * @returns A copy of the value with undefined entries removed.
- */
+export const firebaseSignOut = async () => {
+  const services = await getServices();
+  if (!services) return false;
+  const { signOut } = await import("firebase/auth");
+  await signOut(services.auth);
+  return true;
+};
+
+export const subscribeFirebaseAuthState = (onChange: (user: FirebaseAuthUser | null) => void) => {
+  let unsubscribe: (() => void) | null = null;
+  getServices().then(async (services) => {
+    if (!services) return;
+    const { onAuthStateChanged } = await import("firebase/auth");
+    unsubscribe = onAuthStateChanged(services.auth, onChange);
+  });
+
+  return () => {
+    unsubscribe?.();
+  };
+};
+
 const stripUndefined = (value: unknown): unknown => {
   if (Array.isArray(value)) {
     return value.map(stripUndefined).filter((item) => item !== undefined);
@@ -106,9 +121,18 @@ const cleanPayload = (payload: unknown) => {
   return stripUndefined(record) as Record<string, unknown>;
 };
 
+const normalizeEntity = <T extends { id: string; updatedAt?: number }>(
+  id: string,
+  data: Record<string, unknown>
+) => ({
+  ...data,
+  id: (typeof data.id === "string" && data.id) || id,
+  updatedAt: typeof data.updatedAt === "number" ? data.updatedAt : 0,
+}) as T;
+
 export const pushSyncOperation = async (operation: SyncOperation) => {
   const services = await getServices();
-  if (!services || !navigator.onLine) return false;
+  if (!services || !navigator.onLine || !services.auth.currentUser) return false;
   const { deleteDoc, doc, setDoc } = await import("firebase/firestore");
 
   if (operation.type === "delete") {
@@ -135,13 +159,13 @@ export const subscribeFirebaseState = (
     if (closed) return;
     unsubs = [
       onSnapshot(collection(services.db, "users"), (snapshot) => {
-        onData({ users: snapshot.docs.map((item) => item.data() as User) });
+        onData({ users: snapshot.docs.map((item) => normalizeEntity<User>(item.id, item.data())) });
       }, () => undefined),
       onSnapshot(collection(services.db, "posts"), (snapshot) => {
-        onData({ posts: snapshot.docs.map((item) => item.data() as Post) });
+        onData({ posts: snapshot.docs.map((item) => normalizeEntity<Post>(item.id, item.data())) });
       }, () => undefined),
       onSnapshot(collection(services.db, "connections"), (snapshot) => {
-        onData({ connections: snapshot.docs.map((item) => item.data() as Connection) });
+        onData({ connections: snapshot.docs.map((item) => normalizeEntity<Connection>(item.id, item.data())) });
       }, () => undefined),
     ];
   });

@@ -1,7 +1,7 @@
 import { ReactNode, useState } from "react";
 import { Link, Navigate, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { Activity } from "lucide-react";
+import { Activity, Eye, EyeOff } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 import { hasFirebaseConfig } from "@/lib/firebaseSync";
 import { Button } from "@/components/ui/button";
@@ -23,6 +23,8 @@ const AuthPage = ({ mode }: Props) => {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [busy, setBusy] = useState(false);
   const navigate = useNavigate();
 
@@ -69,14 +71,52 @@ const AuthPage = ({ mode }: Props) => {
 
           <form onSubmit={submit} className="mt-6 space-y-4">
             <Field label="Username">
-              <Input value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" placeholder="aria" className="h-11 rounded-lg bg-background" />
+              <Input
+                value={username}
+                onChange={(event) => setUsername(event.target.value)}
+                autoComplete="username"
+                placeholder="John Doe"
+                className="h-11 rounded-lg bg-background"
+              />
             </Field>
             <Field label="Password">
-              <Input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete={mode === "login" ? "current-password" : "new-password"} className="h-11 rounded-lg bg-background" />
+              <div className="relative">
+                <Input
+                  type={showPassword ? "text" : "password"}
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                  autoComplete={mode === "login" ? "current-password" : "new-password"}
+                  placeholder="Enter password"
+                  className="h-11 rounded-lg bg-background pr-10"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground transition-colors hover:text-foreground"
+                >
+                  {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                </button>
+              </div>
             </Field>
             {mode === "register" && (
               <Field label="Confirm password">
-                <Input type="password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} autoComplete="new-password" className="h-11 rounded-lg bg-background" />
+                <div className="relative">
+                  <Input
+                    type={showConfirmPassword ? "text" : "password"}
+                    value={confirmPassword}
+                    onChange={(event) => setConfirmPassword(event.target.value)}
+                    autoComplete="new-password"
+                    placeholder="Confirm password"
+                    className="h-11 rounded-lg bg-background pr-10"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground transition-colors hover:text-foreground"
+                  >
+                    {showConfirmPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                  </button>
+                </div>
               </Field>
             )}
             <Button className="h-11 w-full" type="submit" disabled={busy}>

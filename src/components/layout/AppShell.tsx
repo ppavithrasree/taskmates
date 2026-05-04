@@ -18,8 +18,8 @@ export const AppShell = ({ children, title }: { children: ReactNode; title?: str
 
   if (!currentUser) return <Navigate to="/login" replace />;
 
-  const signOut = () => {
-    logout();
+  const signOut = async () => {
+    await logout();
     navigate("/");
   };
 

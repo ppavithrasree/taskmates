@@ -4,6 +4,7 @@ import { Clock3, Globe2, Pencil, Trash2, Users } from "lucide-react";
 import { toast } from "sonner";
 import type { Post, Visibility } from "@/types";
 import { useApp } from "@/context/AppContext";
+import { formatTimeRange24 } from "@/lib/dateTime";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
@@ -14,9 +15,6 @@ const visibility: Record<Visibility, { label: string; icon: typeof Globe2; class
   connections: { label: "Connections", icon: Users, classes: "bg-success-soft text-success" },
   custom: { label: "Custom", icon: Users, classes: "bg-accent-soft text-accent" },
 };
-
-const rangeLabel = (start: number, end: number) =>
-  `${new Date(start).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })} - ${new Date(end).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
 
 export const PostCard = ({ post }: { post: Post }) => {
   const { currentUser, users, deletePost } = useApp();
@@ -47,7 +45,7 @@ export const PostCard = ({ post }: { post: Post }) => {
 
       <div className="mb-3 flex items-center gap-2 rounded-lg bg-muted px-3 py-2 text-sm font-semibold">
         <Clock3 className="size-4 text-primary" />
-        {rangeLabel(post.startTime, post.endTime)}
+        {formatTimeRange24(post.startTime, post.endTime)}
       </div>
       <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">{post.content}</p>
 

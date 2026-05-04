@@ -8,6 +8,7 @@ import {
   firebaseLogin,
   hasFirebaseConfig,
   pushSyncOperation,
+  firebaseSignOut,
   subscribeFirebaseState,
   usernameToEmail,
 } from "@/lib/firebaseSync";
@@ -17,6 +18,7 @@ import { notifyCoverageGap, scheduleCoverageReminderForNextMidnight } from "@/li
 const LS_KEY = "taskmates_activity_state_v1";
 const SESSION_KEY = "taskmates_activity_session_v1";
 const TOKEN_KEY = "taskmates_firebase_token_v1";
+const DEFAULT_THEME: "light" | "dark" = "dark";
 
 interface AppContextValue {
   currentUser: User | null;
@@ -24,18 +26,17 @@ interface AppContextValue {
   posts: Post[];
   connections: Connection[];
   settings: AppState["settings"];
-  recentSearches: AppState["recentSearches"];
   coverageAlerts: AppState["coverageAlerts"];
   syncPendingCount: number;
   online: boolean;
   register: (username: string, password: string, confirmPassword: string) => Promise<AuthResult>;
   login: (username: string, password: string) => Promise<AuthResult>;
-  logout: () => void;
+  logout: () => Promise<void>;
   changePassword: (password: string) => AuthResult;
   searchUsers: (query: string) => User[];
-  rememberSearch: (username: string) => void;
   sendRequest: (toId: string) => void;
   respondRequest: (requestId: string, accept: boolean) => void;
+  deleteConnection: (userId: string) => void;
   getConnections: (userId: string) => User[];
   getConnectionStatus: (otherId: string) => "self" | "connected" | "incoming" | "outgoing" | "none";
   addPost: (input: { startTime: number; endTime: number; content: string; visibility?: Visibility; customUsernames?: string[] }) => AuthResult;
@@ -58,10 +59,9 @@ const emptyState = (): AppState => ({
   users: [],
   posts: [],
   connections: [],
-  recentSearches: [],
   coverageAlerts: [],
   syncQueue: [],
-  settings: { theme: "dark" },
+  settings: { theme: DEFAULT_THEME },
 });
 
 const seed = (): AppState => {
@@ -87,10 +87,9 @@ const seed = (): AppState => {
       { id: "c1", senderId: "u_aria", receiverId: "u_maya", status: "accepted", createdAt: now - 5e7, updatedAt: now - 5e7 },
       { id: "c2", senderId: "u_julian", receiverId: "u_aria", status: "accepted", createdAt: now - 4e7, updatedAt: now - 4e7 },
     ],
-    recentSearches: [],
     coverageAlerts: [],
     syncQueue: [],
-    settings: { theme: "dark" },
+    settings: { theme: DEFAULT_THEME },
   };
 };
 
@@ -131,9 +130,13 @@ const load = (): AppState => {
       hasFirebaseConfig &&
       parsed.users.length > 0 &&
       parsed.users.every((user) => ["u_aria", "u_maya", "u_julian"].includes(user.id));
-    return isDemoOnly ? { ...emptyState(), settings: parsed.settings ?? { theme: "dark" } } : parsed;
+    const nextSettings = {
+      ...parsed.settings,
+      theme: parsed.settings?.theme ?? DEFAULT_THEME,
+    };
+    return isDemoOnly ? { ...emptyState(), settings: nextSettings } : { ...parsed, settings: nextSettings };
   } catch {
-    return seed();
+    return hasFirebaseConfig ? emptyState() : seed();
   }
 };
 
@@ -181,6 +184,35 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
 
   const currentUser = useMemo(() => state.users.find((user) => user.id === currentUserId) ?? null, [state.users, currentUserId]);
 
+  const commitOperation = useCallback(
+    (operation: ReturnType<typeof queueFor>) => {
+      setState((snapshot) => ({
+        ...snapshot,
+        syncQueue: [...snapshot.syncQueue, operation],
+      }));
+
+      void (async () => {
+        if (!online) return;
+        const pushed = await pushSyncOperation(operation);
+        if (pushed) {
+          setState((snapshot) => ({
+            ...snapshot,
+            syncQueue: snapshot.syncQueue.filter((item) => item.id !== operation.id),
+          }));
+        }
+      })();
+    },
+    [online]
+  );
+
+  useEffect(() => {
+    if (!currentUser?.theme || currentUser.theme === state.settings.theme) return;
+    setState((snapshot) => ({
+      ...snapshot,
+      settings: { ...snapshot.settings, theme: currentUser.theme ?? snapshot.settings.theme },
+    }));
+  }, [currentUser?.theme, state.settings.theme]);
+
   useEffect(() => {
     const onOnline = () => setOnline(true);
     const onOffline = () => setOnline(false);
@@ -195,6 +227,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   useEffect(() => {
     if (!online || state.syncQueue.length === 0) return;
     let cancelled = false;
+    let retryTimer: number | undefined;
     const flush = async () => {
       const completed: string[] = [];
       for (const operation of state.syncQueue) {
@@ -206,12 +239,30 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         }
       }
       if (!cancelled && completed.length) {
-        setState((snapshot) => ({ ...snapshot, syncQueue: snapshot.syncQueue.filter((operation) => !completed.includes(operation.id)) }));
+        setState((snapshot) => {
+          const completedSet = new Set(completed);
+          const syncedPostIds = new Set(
+            snapshot.syncQueue
+              .filter((operation) => completedSet.has(operation.id) && operation.collection === "posts" && operation.type === "upsert")
+              .map((operation) => operation.entityId)
+          );
+
+          return {
+            ...snapshot,
+            posts: snapshot.posts.map((post) => (syncedPostIds.has(post.id) ? { ...post, dirty: false } : post)),
+            syncQueue: snapshot.syncQueue.filter((operation) => !completedSet.has(operation.id)),
+          };
+        });
+      }
+
+      if (!cancelled && completed.length === 0 && state.syncQueue.length > 0) {
+        retryTimer = window.setTimeout(flush, 2500);
       }
     };
     flush();
     return () => {
       cancelled = true;
+      if (retryTimer) window.clearTimeout(retryTimer);
     };
   }, [online, state.syncQueue]);
 
@@ -326,11 +377,12 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     }
 
     const user = makeUser(firebaseId ?? uid("u"), clean, Date.now(), password);
+    const operation = queueFor("users", "upsert", user.id, user);
     setState((snapshot) => ({
       ...snapshot,
       users: [...snapshot.users, user],
-      syncQueue: [...snapshot.syncQueue, queueFor("users", "upsert", user.id, user)],
     }));
+    commitOperation(operation);
     setCurrentUserId(user.id);
     return { ok: true };
   };
@@ -345,10 +397,27 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         if (account?.idToken) localStorage.setItem(TOKEN_KEY, account.idToken);
         if (!user && account?.localId) {
           const remoteUser = await firebaseGetUser(account.localId);
-          if (remoteUser) {
-            user = { ...remoteUser, passwordHash: hashPassword(password) };
-            setState((snapshot) => ({ ...snapshot, users: mergeByFreshness(snapshot.users, [user as User]) }));
-          }
+          user = remoteUser
+            ? { ...remoteUser, passwordHash: hashPassword(password) }
+            : {
+              id: account.localId,
+              username: clean,
+              email: usernameToEmail(clean),
+              connections: [],
+              privacy: "public",
+              customUsernames: [],
+              retentionDays: 15,
+              createdAt: Date.now(),
+              updatedAt: Date.now(),
+              passwordHash: hashPassword(password),
+            };
+          const operation = queueFor("users", "upsert", (user as User).id, user);
+
+          setState((snapshot) => ({
+            ...snapshot,
+            users: mergeByFreshness(snapshot.users, [user as User]),
+          }));
+          commitOperation(operation);
         }
       } catch {
         if (!user || user.passwordHash !== hashPassword(password)) return { ok: false, error: "Invalid username or password." };
@@ -364,8 +433,9 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     return { ok: true };
   };
 
-  const logout = () => {
+  const logout = async () => {
     localStorage.removeItem(TOKEN_KEY);
+    await firebaseSignOut().catch(() => undefined);
     setCurrentUserId(null);
   };
 
@@ -374,29 +444,21 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     if (password.length < 6) return { ok: false, error: "Password must be at least 6 characters." };
     if (online) firebaseChangePassword(password).catch(() => toast.error("Please sign in again before changing your Firebase password."));
     const updated = { ...currentUser, passwordHash: hashPassword(password), updatedAt: Date.now() };
+    const operation = queueFor("users", "upsert", updated.id, updated);
     setState((snapshot) => ({
       ...snapshot,
       users: snapshot.users.map((user) => user.id === updated.id ? updated : user),
-      syncQueue: [...snapshot.syncQueue, queueFor("users", "upsert", updated.id, updated)],
     }));
+    commitOperation(operation);
     return { ok: true };
   };
 
   const searchUsers = useCallback((query: string) => {
     const clean = query.trim().toLowerCase();
     if (!clean) return [];
-    return state.users.filter((user) => user.username.startsWith(clean) && user.id !== currentUserId).slice(0, 20);
-  }, [currentUserId, state.users]);
-
-  const rememberSearch = (username: string) => {
-    setState((snapshot) => ({
-      ...snapshot,
-      recentSearches: [
-        { username, searchedAt: Date.now() },
-        ...snapshot.recentSearches.filter((item) => item.username !== username),
-      ].slice(0, 8),
-    }));
-  };
+    const connectedIds = currentUser?.connections ?? [];
+    return state.users.filter((user) => user.username.startsWith(clean) && user.id !== currentUserId && !connectedIds.includes(user.id)).slice(0, 20);
+  }, [currentUserId, currentUser?.connections, state.users]);
 
   const getConnectionStatus: AppContextValue["getConnectionStatus"] = (otherId) => {
     if (!currentUser) return "none";
@@ -415,38 +477,71 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   const sendRequest: AppContextValue["sendRequest"] = (toId) => {
     if (!currentUser || toId === currentUser.id || getConnectionStatus(toId) !== "none") return;
     const connection: Connection = { id: uid("c"), senderId: currentUser.id, receiverId: toId, status: "pending", createdAt: Date.now(), updatedAt: Date.now() };
+    const operation = queueFor("connections", "upsert", connection.id, connection);
     setState((snapshot) => ({
       ...snapshot,
       connections: [...snapshot.connections, connection],
-      syncQueue: [...snapshot.syncQueue, queueFor("connections", "upsert", connection.id, connection)],
     }));
+    commitOperation(operation);
+  };
+
+  const deleteConnection: AppContextValue["deleteConnection"] = (userId) => {
+    if (!currentUser) return;
+    const connectionsToDelete = state.connections.filter(
+      (conn) =>
+        conn.status === "accepted" &&
+        ((conn.senderId === currentUser.id && conn.receiverId === userId) ||
+          (conn.senderId === userId && conn.receiverId === currentUser.id))
+    );
+    const updatedUsers = state.users.map((user) => {
+      if (user.id === currentUser.id) {
+        return { ...user, connections: user.connections.filter((id) => id !== userId), updatedAt: Date.now() };
+      }
+      if (user.id === userId) {
+        return { ...user, connections: user.connections.filter((id) => id !== currentUser.id), updatedAt: Date.now() };
+      }
+      return user;
+    });
+    setState((snapshot) => {
+      const updatedConnections = snapshot.connections.filter(
+        (conn) => !connectionsToDelete.find((dc) => dc.id === conn.id)
+      );
+      const userOpsQueue = connectionsToDelete.map((conn) => queueFor("connections", "delete", conn.id));
+      const userUpdateOps = updatedUsers
+        .filter((user) => user.id === currentUser.id || user.id === userId)
+        .map((user) => queueFor("users", "upsert", user.id, user));
+      return {
+        ...snapshot,
+        users: updatedUsers,
+        connections: updatedConnections,
+        syncQueue: [...snapshot.syncQueue, ...userOpsQueue, ...userUpdateOps],
+      };
+    });
+    toast.success("Connection removed.");
   };
 
   const respondRequest: AppContextValue["respondRequest"] = (requestId, accept) => {
-    setState((snapshot) => {
-      const request = snapshot.connections.find((connection) => connection.id === requestId);
-      if (!request) return snapshot;
-      const updated = { ...request, status: accept ? "accepted" : "rejected", updatedAt: Date.now() } satisfies Connection;
-      const users = accept
-        ? snapshot.users.map((user) => {
-            if (user.id === request.senderId && !user.connections.includes(request.receiverId)) return { ...user, connections: [...user.connections, request.receiverId], updatedAt: Date.now() };
-            if (user.id === request.receiverId && !user.connections.includes(request.senderId)) return { ...user, connections: [...user.connections, request.senderId], updatedAt: Date.now() };
-            return user;
-          })
-        : snapshot.users;
-      return {
-        ...snapshot,
-        users,
-        connections: snapshot.connections.map((connection) => connection.id === requestId ? updated : connection),
-        syncQueue: [
-          ...snapshot.syncQueue,
-          queueFor("connections", "upsert", updated.id, updated),
-          ...users
-            .filter((user) => user.id === request.senderId || user.id === request.receiverId)
-            .map((user) => queueFor("users", "upsert", user.id, user)),
-        ],
-      };
-    });
+    const request = state.connections.find((connection) => connection.id === requestId);
+    if (!request) return;
+    const updated = { ...request, status: accept ? "accepted" : "rejected", updatedAt: Date.now() } satisfies Connection;
+    const updatedUsers = accept
+      ? state.users.map((user) => {
+        if (user.id === request.senderId && !user.connections.includes(request.receiverId)) return { ...user, connections: [...user.connections, request.receiverId], updatedAt: Date.now() };
+        if (user.id === request.receiverId && !user.connections.includes(request.senderId)) return { ...user, connections: [...user.connections, request.senderId], updatedAt: Date.now() };
+        return user;
+      })
+      : state.users;
+
+    setState((snapshot) => ({
+      ...snapshot,
+      users: updatedUsers,
+      connections: snapshot.connections.map((connection) => connection.id === requestId ? updated : connection),
+    }));
+
+    commitOperation(queueFor("connections", "upsert", updated.id, updated));
+    updatedUsers
+      .filter((user) => user.id === request.senderId || user.id === request.receiverId)
+      .forEach((user) => commitOperation(queueFor("users", "upsert", user.id, user)));
   };
 
   const addPost: AppContextValue["addPost"] = (input) => {
@@ -455,7 +550,9 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     if (!isValidPostRange(input.startTime, input.endTime)) return { ok: false, error: "Posts must cover at least 5 minutes." };
     if (!input.content.trim()) return { ok: false, error: "Add what happened during this time." };
     const post: Post = { id: uid("p"), userId: currentUser.id, startTime: input.startTime, endTime: input.endTime, content: input.content.trim(), visibility: input.visibility, customUsernames: input.customUsernames, createdAt: Date.now(), updatedAt: Date.now(), dirty: true };
-    setState((snapshot) => ({ ...snapshot, posts: [post, ...snapshot.posts], syncQueue: [...snapshot.syncQueue, queueFor("posts", "upsert", post.id, post)] }));
+    const operation = queueFor("posts", "upsert", post.id, post);
+    setState((snapshot) => ({ ...snapshot, posts: [post, ...snapshot.posts] }));
+    commitOperation(operation);
     return { ok: true };
   };
 
@@ -466,32 +563,44 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     if (next.startTime > Date.now() || next.endTime > Date.now()) return { ok: false, error: "Future activity cannot be posted." };
     if (!isValidPostRange(next.startTime, next.endTime)) return { ok: false, error: "Posts must cover at least 5 minutes." };
     if (!next.content) return { ok: false, error: "Add what happened during this time." };
-    setState((snapshot) => ({ ...snapshot, posts: snapshot.posts.map((post) => post.id === id ? next : post), syncQueue: [...snapshot.syncQueue, queueFor("posts", "upsert", next.id, next)] }));
+    const operation = queueFor("posts", "upsert", next.id, next);
+    setState((snapshot) => ({ ...snapshot, posts: snapshot.posts.map((post) => post.id === id ? next : post) }));
+    commitOperation(operation);
     return { ok: true };
   };
 
   const deletePost = (id: string) => {
+    const operation = queueFor("posts", "delete", id);
     setState((snapshot) => ({
       ...snapshot,
       posts: snapshot.posts.map((post) => post.id === id && post.userId === currentUser?.id ? { ...post, deletedAt: Date.now(), updatedAt: Date.now(), dirty: true } : post),
-      syncQueue: [...snapshot.syncQueue, queueFor("posts", "delete", id)],
     }));
+    commitOperation(operation);
   };
 
   const updateUserSettings: AppContextValue["updateUserSettings"] = (patch) => {
     if (!currentUser) return;
     const retentionDays = patch.retentionDays ? Math.min(60, Math.max(1, patch.retentionDays)) : currentUser.retentionDays;
     const updated = { ...currentUser, ...patch, retentionDays, updatedAt: Date.now() };
+    const operation = queueFor("users", "upsert", updated.id, updated);
     setState((snapshot) => ({
       ...snapshot,
       users: snapshot.users.map((user) => user.id === currentUser.id ? updated : user),
-      syncQueue: [...snapshot.syncQueue, queueFor("users", "upsert", updated.id, updated)],
     }));
+    commitOperation(operation);
   };
 
   const updateTheme = (theme: "light" | "dark") => {
     document.documentElement.classList.toggle("dark", theme === "dark");
-    setState((snapshot) => ({ ...snapshot, settings: { ...snapshot.settings, theme } }));
+    if (!currentUser) return;
+    const updated = { ...currentUser, theme, updatedAt: Date.now() };
+    const operation = queueFor("users", "upsert", currentUser.id, updated);
+    setState((snapshot) => ({
+      ...snapshot,
+      settings: { ...snapshot.settings, theme },
+      users: snapshot.users.map((user) => user.id === currentUser.id ? updated : user),
+    }));
+    commitOperation(operation);
   };
 
   const visibleFeedPosts = useMemo(() => {
@@ -508,7 +617,6 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     posts: state.posts,
     connections: state.connections,
     settings: state.settings,
-    recentSearches: state.recentSearches,
     coverageAlerts: state.coverageAlerts,
     syncPendingCount: state.syncQueue.length,
     online,
@@ -517,9 +625,9 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     logout,
     changePassword,
     searchUsers,
-    rememberSearch,
     sendRequest,
     respondRequest,
+    deleteConnection,
     getConnections,
     getConnectionStatus,
     addPost,
