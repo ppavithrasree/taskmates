@@ -21,7 +21,7 @@ const Settings = () => {
             <Button
               type="button"
               variant="outline"
-              className={settings.theme === "light" ? "border-primary bg-primary-soft text-primary hover:bg-primary-soft" : "bg-card"}
+              className={settings.theme === "light" ? "border-primary bg-primary-soft text-primary" : "bg-card"}
               onClick={() => updateTheme("light")}
             >
               <Sun className="mr-2 size-4" /> Light
@@ -29,7 +29,7 @@ const Settings = () => {
             <Button
               type="button"
               variant="outline"
-              className={settings.theme === "dark" ? "border-accent bg-accent-soft text-accent hover:bg-accent-soft" : "bg-card"}
+              className={settings.theme === "dark" ? "border-accent bg-accent-soft text-accent" : "bg-card"}
               onClick={() => updateTheme("dark")}
             >
               <Moon className="mr-2 size-4" /> Dark

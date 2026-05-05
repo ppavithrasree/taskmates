@@ -26,7 +26,7 @@ export const PostCard = ({ post }: { post: Post }) => {
   const Icon = meta.icon;
 
   return (
-    <article className="tap-lift animate-fade-in-up rounded-lg border border-border bg-card p-4 shadow-soft transition-smooth hover:-translate-y-0.5 hover:shadow-soft-lg">
+    <article className="tap-lift animate-fade-in-up rounded-lg border border-border bg-card p-4 shadow-soft">
       <header className="mb-4 flex items-start justify-between gap-3">
         <Link to={author ? `/profile/${author.username}` : "#"} className="flex min-w-0 items-center gap-3">
           <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-gradient-primary font-bold text-primary-foreground">
@@ -52,7 +52,7 @@ export const PostCard = ({ post }: { post: Post }) => {
       {isMine && (
         <footer className="mt-4 flex gap-1 border-t border-border pt-3">
           <Button size="sm" variant="ghost" onClick={() => setEditOpen(true)}><Pencil className="mr-1 size-3.5" /> Edit</Button>
-          <Button size="sm" variant="ghost" className="text-destructive hover:text-destructive" onClick={() => setConfirmOpen(true)}><Trash2 className="mr-1 size-3.5" /> Delete</Button>
+          <Button size="sm" variant="ghost" className="text-destructive" onClick={() => setConfirmOpen(true)}><Trash2 className="mr-1 size-3.5" /> Delete</Button>
         </footer>
       )}
 
@@ -67,12 +67,12 @@ export const PostCard = ({ post }: { post: Post }) => {
         <AlertDialogContent className="rounded-lg">
           <AlertDialogHeader>
             <AlertDialogTitle>Delete this activity?</AlertDialogTitle>
-            <AlertDialogDescription>It disappears locally now and syncs the deletion when online.</AlertDialogDescription>
+            <AlertDialogDescription>This will permanently delete this activity log.</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              className="bg-destructive text-destructive-foreground"
               onClick={() => {
                 deletePost(post.id);
                 toast.success("Activity deleted.");

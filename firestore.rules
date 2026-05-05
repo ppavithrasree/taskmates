@@ -2,33 +2,30 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-    function signedIn() {
-      return request.auth != null;
-    }
 
-    function isOwner(userId) {
-      return signedIn() && request.auth.uid == userId;
-    }
+    // Any signed-in user can read all data.
+    // Users can only write their own user doc.
+    // Posts can only be created/modified/deleted by the author.
+    // Connections can be created by the sender, updated/deleted by either party.
 
     match /users/{userId} {
-      allow read: if signedIn();
-      allow create: if isOwner(userId);
-      allow update, delete: if isOwner(userId);
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && request.auth.uid == userId;
     }
 
     match /posts/{postId} {
-      allow read: if signedIn();
-      allow create: if signedIn()
+      allow read: if request.auth != null;
+      allow create: if request.auth != null
         && request.resource.data.userId == request.auth.uid;
-      allow update, delete: if signedIn()
+      allow update, delete: if request.auth != null
         && resource.data.userId == request.auth.uid;
     }
 
     match /connections/{connectionId} {
-      allow read: if signedIn();
-      allow create: if signedIn()
+      allow read: if request.auth != null;
+      allow create: if request.auth != null
         && request.resource.data.senderId == request.auth.uid;
-      allow update, delete: if signedIn()
+      allow update, delete: if request.auth != null
         && (
           resource.data.senderId == request.auth.uid ||
           resource.data.receiverId == request.auth.uid

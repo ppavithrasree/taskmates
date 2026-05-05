@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 
 const Profile = () => {
   const { username } = useParams();
-  const { currentUser, users, posts, changePassword } = useApp();
+  const { currentUser, users, posts, changePassword, getAcceptedConnectionIds } = useApp();
   const [password, setPassword] = useState("");
   const target = currentUser ? (username ? users.find((user) => user.username === username.toLowerCase()) : currentUser) : undefined;
   const isOwn = Boolean(currentUser && target?.id === currentUser.id);
@@ -22,6 +22,7 @@ const Profile = () => {
   const cutoff = target ? Date.now() - target.retentionDays * 86_400_000 : 0;
   const retained = visiblePosts.filter((post) => post.endTime >= cutoff);
   const stats = activityStats(retained);
+  const connectionCount = target ? getAcceptedConnectionIds(target.id).length : 0;
 
   if (!currentUser) return null;
 
@@ -33,7 +34,7 @@ const Profile = () => {
     const result = changePassword(password);
     if (!result.ok) toast.error(result.error);
     else {
-      toast.success("Password changed locally.");
+      toast.success("Password changed.");
       setPassword("");
     }
   };
@@ -68,7 +69,7 @@ const Profile = () => {
         <section className="grid grid-cols-3 gap-3">
           <Info icon={Timer} label="Today coverage" value={`${stats.coveragePercent}%`} />
           <Info icon={Shield} label="Privacy" value={target.privacy} />
-          <Info icon={Users} label="Connections" value={`${target.connections.length}`} />
+          <Info icon={Users} label="Connections" value={`${connectionCount}`} />
         </section>
 
         <section className="space-y-3">

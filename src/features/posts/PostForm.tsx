@@ -46,14 +46,15 @@ const fromParts = (parts: DateParts) =>
   ).getTime();
 
 export const PostForm = ({ initial, onClose, onSaved }: Props) => {
-  const { currentUser, addPost, updatePost, getConnections } = useApp();
+  const { currentUser, users, addPost, updatePost, getAcceptedConnectionIds } = useApp();
   const [startParts, setStartParts] = useState(() => toParts(initial?.startTime ?? Date.now() - 30 * 60_000));
   const [endParts, setEndParts] = useState(() => toParts(initial?.endTime ?? Date.now()));
   const [content, setContent] = useState(initial?.content ?? "");
   const [visibility, setVisibility] = useState<Visibility>(initial?.visibility ?? currentUser?.privacy ?? "public");
   const [customUsernames, setCustomUsernames] = useState<string[]>(initial?.customUsernames ?? currentUser?.customUsernames ?? []);
 
-  const connections = currentUser ? getConnections(currentUser.id) : [];
+  const connectedIds = currentUser ? getAcceptedConnectionIds(currentUser.id) : [];
+  const connections = users.filter((u) => connectedIds.includes(u.id));
   const nowParts = useMemo(() => toParts(Date.now()), []);
 
   const updatePart = (side: "start" | "end", key: keyof DateParts, value: string) => {

@@ -6,7 +6,6 @@ export interface User {
   id: string;
   username: string;
   email: string;
-  connections: string[];
   privacy: Visibility;
   customUsernames: string[];
   retentionDays: number;
@@ -14,6 +13,8 @@ export interface User {
   createdAt: number;
   updatedAt: number;
   passwordHash?: string;
+  /** @deprecated kept for backward compat with old local storage data */
+  connections?: string[];
 }
 
 export interface Post {
@@ -39,15 +40,6 @@ export interface Connection {
   updatedAt: number;
 }
 
-export interface CoverageAlert {
-  id: string;
-  userId: string;
-  dateKey: string;
-  gaps: TimeGap[];
-  createdAt: number;
-  seen: boolean;
-}
-
 export interface TimeGap {
   start: number;
   end: number;
@@ -64,7 +56,6 @@ export interface SyncOperation {
 
 export interface AppSettings {
   theme: "light" | "dark";
-  lastCoverageRunDateKey?: string;
   lastRetentionRun?: number;
 }
 
@@ -72,7 +63,6 @@ export interface AppState {
   users: User[];
   posts: Post[];
   connections: Connection[];
-  coverageAlerts: CoverageAlert[];
   syncQueue: SyncOperation[];
   settings: AppSettings;
 }

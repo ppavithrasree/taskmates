@@ -13,7 +13,7 @@ import {
   usernameToEmail,
 } from "@/lib/firebaseSync";
 import { analyzeDayCoverage, dateKey, isValidPostRange, postsInLocalDay, previousLocalDayRange, startOfLocalDay } from "@/lib/timeCoverage";
-import { notifyCoverageGap, scheduleCoverageReminderForNextMidnight } from "@/lib/notifications";
+import { scheduleDailyMidnightNotification } from "@/lib/notifications";
 
 const LS_KEY = "taskmates_activity_state_v1";
 const SESSION_KEY = "taskmates_activity_session_v1";
@@ -26,7 +26,6 @@ interface AppContextValue {
   posts: Post[];
   connections: Connection[];
   settings: AppState["settings"];
-  coverageAlerts: AppState["coverageAlerts"];
   syncPendingCount: number;
   online: boolean;
   register: (username: string, password: string, confirmPassword: string) => Promise<AuthResult>;
@@ -37,14 +36,13 @@ interface AppContextValue {
   sendRequest: (toId: string) => void;
   respondRequest: (requestId: string, accept: boolean) => void;
   deleteConnection: (userId: string) => void;
-  getConnections: (userId: string) => User[];
+  getAcceptedConnectionIds: (userId: string) => string[];
   getConnectionStatus: (otherId: string) => "self" | "connected" | "incoming" | "outgoing" | "none";
   addPost: (input: { startTime: number; endTime: number; content: string; visibility?: Visibility; customUsernames?: string[] }) => AuthResult;
   updatePost: (id: string, patch: Partial<Pick<Post, "startTime" | "endTime" | "content" | "visibility" | "customUsernames">>) => AuthResult;
   deletePost: (id: string) => void;
   updateUserSettings: (patch: Partial<Pick<User, "privacy" | "customUsernames" | "retentionDays">>) => void;
   updateTheme: (theme: "light" | "dark") => void;
-  runCoverageCheck: (now?: number) => void;
   runRetentionCleanup: () => void;
   visibleFeedPosts: Post[];
 }
@@ -59,45 +57,14 @@ const emptyState = (): AppState => ({
   users: [],
   posts: [],
   connections: [],
-  coverageAlerts: [],
   syncQueue: [],
   settings: { theme: DEFAULT_THEME },
 });
-
-const seed = (): AppState => {
-  const now = Date.now();
-  const today = startOfLocalDay(now);
-  const users: User[] = [
-    makeUser("u_aria", "aria", now - 8e7, "demo"),
-    makeUser("u_maya", "maya", now - 7e7, "demo"),
-    makeUser("u_julian", "julian", now - 6e7, "demo"),
-  ];
-  users[0].connections = ["u_maya", "u_julian"];
-  users[1].connections = ["u_aria"];
-  users[2].connections = ["u_aria"];
-
-  return {
-    users,
-    posts: [
-      makePost("p1", "u_aria", today + 8 * 60 * 60_000, today + 10 * 60 * 60_000, "Planning, breakfast, and inbox triage.", "public"),
-      makePost("p2", "u_maya", today + 9 * 60 * 60_000, today + 11 * 60 * 60_000, "Morning walk and design review.", "public"),
-      makePost("p3", "u_julian", today + 13 * 60 * 60_000, today + 14 * 60 * 60_000, "Writing block with a quiet phone.", "connections"),
-    ],
-    connections: [
-      { id: "c1", senderId: "u_aria", receiverId: "u_maya", status: "accepted", createdAt: now - 5e7, updatedAt: now - 5e7 },
-      { id: "c2", senderId: "u_julian", receiverId: "u_aria", status: "accepted", createdAt: now - 4e7, updatedAt: now - 4e7 },
-    ],
-    coverageAlerts: [],
-    syncQueue: [],
-    settings: { theme: DEFAULT_THEME },
-  };
-};
 
 const makeUser = (id: string, username: string, createdAt: number, password: string): User => ({
   id,
   username,
   email: usernameToEmail(username),
-  connections: [],
   privacy: "public",
   customUsernames: [],
   retentionDays: 15,
@@ -121,11 +88,12 @@ const load = (): AppState => {
   try {
     const raw = localStorage.getItem(LS_KEY);
     if (!raw) {
-      const initial = hasFirebaseConfig ? emptyState() : seed();
+      const initial = emptyState();
       localStorage.setItem(LS_KEY, JSON.stringify(initial));
       return initial;
     }
     const parsed = JSON.parse(raw) as AppState;
+    // Clean out demo-only data when Firebase is configured
     const isDemoOnly =
       hasFirebaseConfig &&
       parsed.users.length > 0 &&
@@ -134,9 +102,16 @@ const load = (): AppState => {
       ...parsed.settings,
       theme: parsed.settings?.theme ?? DEFAULT_THEME,
     };
-    return isDemoOnly ? { ...emptyState(), settings: nextSettings } : { ...parsed, settings: nextSettings };
+    if (isDemoOnly) return { ...emptyState(), settings: nextSettings };
+    // Remove soft-deleted posts from local state on load
+    return {
+      ...parsed,
+      posts: (parsed.posts ?? []).filter((p) => !p.deletedAt),
+      connections: (parsed.connections ?? []).filter((c) => c.status !== "rejected"),
+      settings: nextSettings,
+    };
   } catch {
-    return hasFirebaseConfig ? emptyState() : seed();
+    return emptyState();
   }
 };
 
@@ -149,8 +124,20 @@ const queueFor = (collection: "users" | "posts" | "connections", type: "upsert" 
   updatedAt: Date.now(),
 });
 
+/** Derive accepted connection user IDs from the connections collection */
+const deriveAcceptedIds = (connections: Connection[], userId: string): string[] => {
+  const ids: string[] = [];
+  for (const c of connections) {
+    if (c.status !== "accepted") continue;
+    if (c.senderId === userId) ids.push(c.receiverId);
+    else if (c.receiverId === userId) ids.push(c.senderId);
+  }
+  return ids;
+};
+
 const postVisibleTo = (post: Post, author: User | undefined, viewer: User, connectedIds: Set<string>) => {
-  if (post.deletedAt || post.userId === viewer.id) return !post.deletedAt;
+  if (post.deletedAt) return false;
+  if (post.userId === viewer.id) return true;
   const visibility = post.visibility ?? author?.privacy ?? "public";
   if (visibility === "public") return true;
   if (visibility === "connections") return connectedIds.has(post.userId);
@@ -224,6 +211,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     };
   }, []);
 
+  // Flush sync queue when online
   useEffect(() => {
     if (!online || state.syncQueue.length === 0) return;
     let cancelled = false;
@@ -243,18 +231,16 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
           const completedSet = new Set(completed);
           const syncedPostIds = new Set(
             snapshot.syncQueue
-              .filter((operation) => completedSet.has(operation.id) && operation.collection === "posts" && operation.type === "upsert")
-              .map((operation) => operation.entityId)
+              .filter((op) => completedSet.has(op.id) && op.collection === "posts" && op.type === "upsert")
+              .map((op) => op.entityId)
           );
-
           return {
             ...snapshot,
             posts: snapshot.posts.map((post) => (syncedPostIds.has(post.id) ? { ...post, dirty: false } : post)),
-            syncQueue: snapshot.syncQueue.filter((operation) => !completedSet.has(operation.id)),
+            syncQueue: snapshot.syncQueue.filter((op) => !completedSet.has(op.id)),
           };
         });
       }
-
       if (!cancelled && completed.length === 0 && state.syncQueue.length > 0) {
         retryTimer = window.setTimeout(flush, 2500);
       }
@@ -266,45 +252,34 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     };
   }, [online, state.syncQueue]);
 
+  // Subscribe to Firebase realtime updates
   useEffect(() => {
     if (!hasFirebaseConfig || !currentUserId) return;
     return subscribeFirebaseState((remote) => {
-      setState((snapshot) => ({
-        ...snapshot,
-        users: remote.users ? mergeByFreshness(snapshot.users, remote.users) : snapshot.users,
-        posts: remote.posts ? mergeByFreshness(snapshot.posts, remote.posts) : snapshot.posts,
-        connections: remote.connections ? mergeByFreshness(snapshot.connections, remote.connections) : snapshot.connections,
-      }));
+      setState((snapshot) => {
+        let nextPosts = remote.posts ? mergeByFreshness(snapshot.posts, remote.posts) : snapshot.posts;
+        // Remove any soft-deleted posts that Firebase has already deleted
+        nextPosts = nextPosts.filter((p) => !p.deletedAt);
+
+        let nextConnections = remote.connections ? mergeByFreshness(snapshot.connections, remote.connections) : snapshot.connections;
+        // Remove rejected connections
+        nextConnections = nextConnections.filter((c) => c.status !== "rejected");
+
+        return {
+          ...snapshot,
+          users: remote.users ? mergeByFreshness(snapshot.users, remote.users) : snapshot.users,
+          posts: nextPosts,
+          connections: nextConnections,
+        };
+      });
     });
   }, [currentUserId]);
 
-  const getConnections = useCallback(
-    (userId: string) => state.users.filter((user) => user.connections.includes(userId)),
-    [state.users]
+  /** Get accepted connection user IDs from connections collection (single source of truth) */
+  const getAcceptedConnectionIds = useCallback(
+    (userId: string) => deriveAcceptedIds(state.connections, userId),
+    [state.connections]
   );
-
-  const runCoverageCheck = useCallback((now = Date.now()) => {
-    setState((snapshot) => {
-      const range = previousLocalDayRange(now);
-      const key = dateKey(range.start);
-      if (snapshot.settings.lastCoverageRunDateKey === key) return snapshot;
-      const alerts = [...snapshot.coverageAlerts];
-
-      for (const user of snapshot.users) {
-        const dayPosts = postsInLocalDay(snapshot.posts, user.id, range.start);
-        const coverage = analyzeDayCoverage(dayPosts, range.start);
-        if (!coverage.isComplete) {
-          const exists = alerts.some((alert) => alert.userId === user.id && alert.dateKey === key);
-          if (!exists) {
-            alerts.push({ id: uid("alert"), userId: user.id, dateKey: key, gaps: coverage.gaps, createdAt: now, seen: false });
-            if (user.id === currentUserId) notifyCoverageGap(coverage.gaps);
-          }
-        }
-      }
-
-      return { ...snapshot, coverageAlerts: alerts, settings: { ...snapshot.settings, lastCoverageRunDateKey: key } };
-    });
-  }, [currentUserId]);
 
   const runRetentionCleanup = useCallback(() => {
     setState((snapshot) => {
@@ -318,7 +293,8 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       if (!expiredIds.size) return { ...snapshot, settings: { ...snapshot.settings, lastRetentionRun: now } };
       return {
         ...snapshot,
-        posts: snapshot.posts.map((post) => expiredIds.has(post.id) ? { ...post, deletedAt: now, updatedAt: now, dirty: true } : post),
+        // Hard-remove expired posts from local state
+        posts: snapshot.posts.filter((post) => !expiredIds.has(post.id)),
         syncQueue: [
           ...snapshot.syncQueue,
           ...[...expiredIds].map((id) => queueFor("posts", "delete", id)),
@@ -328,13 +304,13 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     });
   }, []);
 
+  // Scheduled retention cleanup
   useEffect(() => {
     const schedule = () => {
       const next = new Date();
       next.setDate(next.getDate() + 1);
       next.setHours(0, 0, 0, 0);
       const timeout = window.setTimeout(() => {
-        runCoverageCheck();
         runRetentionCleanup();
         schedule();
       }, Math.max(1000, next.getTime() - Date.now()));
@@ -347,14 +323,15 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       window.clearTimeout(timeout);
       window.clearInterval(interval);
     };
-  }, [runCoverageCheck, runRetentionCleanup]);
+  }, [runRetentionCleanup]);
 
+  // Schedule daily midnight notification for coverage gaps
   useEffect(() => {
     if (!currentUser) return;
     const todayStart = startOfLocalDay(Date.now());
     const todayPosts = postsInLocalDay(state.posts, currentUser.id, todayStart);
     const coverage = analyzeDayCoverage(todayPosts, todayStart);
-    scheduleCoverageReminderForNextMidnight(!coverage.isComplete);
+    scheduleDailyMidnightNotification(!coverage.isComplete);
   }, [currentUser, state.posts]);
 
   const register: AppContextValue["register"] = async (username, password, confirmPassword) => {
@@ -362,8 +339,8 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     if (!/^[a-z0-9_]{3,24}$/.test(clean)) return { ok: false, error: "Use 3-24 lowercase letters, numbers, or underscores." };
     if (password.length < 6) return { ok: false, error: "Password must be at least 6 characters." };
     if (password !== confirmPassword) return { ok: false, error: "Passwords do not match." };
-    if (state.users.some((user) => user.username === clean)) return { ok: false, error: "Username already taken." };
 
+    // Don't check local state for username — Firebase Auth is the source of truth
     const email = usernameToEmail(clean);
     let firebaseId: string | undefined;
     try {
@@ -371,9 +348,16 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         const account = await firebaseCreateAccount(email, password);
         firebaseId = account?.localId;
         if (account?.idToken) localStorage.setItem(TOKEN_KEY, account.idToken);
+      } else {
+        return { ok: false, error: "You must be online to create an account." };
       }
     } catch (error) {
-      return { ok: false, error: error instanceof Error ? error.message : "Firebase signup failed." };
+      const msg = error instanceof Error ? error.message : "Signup failed.";
+      // Firebase returns "EMAIL_EXISTS" if already registered
+      if (msg.includes("email-already-in-use") || msg.includes("EMAIL_EXISTS")) {
+        return { ok: false, error: "Username already taken." };
+      }
+      return { ok: false, error: msg };
     }
 
     const user = makeUser(firebaseId ?? uid("u"), clean, Date.now(), password);
@@ -403,7 +387,6 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
               id: account.localId,
               username: clean,
               email: usernameToEmail(clean),
-              connections: [],
               privacy: "public",
               customUsernames: [],
               retentionDays: 15,
@@ -412,12 +395,18 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
               passwordHash: hashPassword(password),
             };
           const operation = queueFor("users", "upsert", (user as User).id, user);
-
           setState((snapshot) => ({
             ...snapshot,
             users: mergeByFreshness(snapshot.users, [user as User]),
           }));
           commitOperation(operation);
+        } else if (user && account?.localId) {
+          // Update local user with correct password hash
+          const updated = { ...user, passwordHash: hashPassword(password) };
+          setState((snapshot) => ({
+            ...snapshot,
+            users: snapshot.users.map((u) => u.id === updated.id ? updated : u),
+          }));
         }
       } catch {
         if (!user || user.passwordHash !== hashPassword(password)) return { ok: false, error: "Invalid username or password." };
@@ -453,25 +442,31 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     return { ok: true };
   };
 
+  /** Search users — exclude self and already-connected users */
   const searchUsers = useCallback((query: string) => {
     const clean = query.trim().toLowerCase();
-    if (!clean) return [];
-    const connectedIds = currentUser?.connections ?? [];
-    return state.users.filter((user) => user.username.startsWith(clean) && user.id !== currentUserId && !connectedIds.includes(user.id)).slice(0, 20);
-  }, [currentUserId, currentUser?.connections, state.users]);
+    if (!clean || !currentUserId) return [];
+    const connectedIds = new Set(deriveAcceptedIds(state.connections, currentUserId));
+    return state.users
+      .filter((user) => user.username.startsWith(clean) && user.id !== currentUserId && !connectedIds.has(user.id))
+      .slice(0, 20);
+  }, [currentUserId, state.users, state.connections]);
 
+  /** Connection status derived from connections collection */
   const getConnectionStatus: AppContextValue["getConnectionStatus"] = (otherId) => {
     if (!currentUser) return "none";
     if (otherId === currentUser.id) return "self";
-    if (currentUser.connections.includes(otherId)) return "connected";
-    const request = state.connections.find(
-      (connection) =>
-        connection.status === "pending" &&
-        ((connection.senderId === currentUser.id && connection.receiverId === otherId) ||
-          (connection.senderId === otherId && connection.receiverId === currentUser.id))
-    );
-    if (!request) return "none";
-    return request.senderId === currentUser.id ? "outgoing" : "incoming";
+    // Check connections collection
+    for (const c of state.connections) {
+      const involves = (c.senderId === currentUser.id && c.receiverId === otherId) ||
+        (c.senderId === otherId && c.receiverId === currentUser.id);
+      if (!involves) continue;
+      if (c.status === "accepted") return "connected";
+      if (c.status === "pending") {
+        return c.senderId === currentUser.id ? "outgoing" : "incoming";
+      }
+    }
+    return "none";
   };
 
   const sendRequest: AppContextValue["sendRequest"] = (toId) => {
@@ -493,55 +488,46 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         ((conn.senderId === currentUser.id && conn.receiverId === userId) ||
           (conn.senderId === userId && conn.receiverId === currentUser.id))
     );
-    const updatedUsers = state.users.map((user) => {
-      if (user.id === currentUser.id) {
-        return { ...user, connections: user.connections.filter((id) => id !== userId), updatedAt: Date.now() };
-      }
-      if (user.id === userId) {
-        return { ...user, connections: user.connections.filter((id) => id !== currentUser.id), updatedAt: Date.now() };
-      }
-      return user;
-    });
+    if (connectionsToDelete.length === 0) return;
+
     setState((snapshot) => {
-      const updatedConnections = snapshot.connections.filter(
-        (conn) => !connectionsToDelete.find((dc) => dc.id === conn.id)
-      );
-      const userOpsQueue = connectionsToDelete.map((conn) => queueFor("connections", "delete", conn.id));
-      const userUpdateOps = updatedUsers
-        .filter((user) => user.id === currentUser.id || user.id === userId)
-        .map((user) => queueFor("users", "upsert", user.id, user));
+      const deleteIds = new Set(connectionsToDelete.map((c) => c.id));
       return {
         ...snapshot,
-        users: updatedUsers,
-        connections: updatedConnections,
-        syncQueue: [...snapshot.syncQueue, ...userOpsQueue, ...userUpdateOps],
+        connections: snapshot.connections.filter((conn) => !deleteIds.has(conn.id)),
+        syncQueue: [
+          ...snapshot.syncQueue,
+          ...connectionsToDelete.map((conn) => queueFor("connections", "delete", conn.id)),
+        ],
       };
     });
+
+    // Push delete operations
+    for (const conn of connectionsToDelete) {
+      commitOperation(queueFor("connections", "delete", conn.id));
+    }
     toast.success("Connection removed.");
   };
 
   const respondRequest: AppContextValue["respondRequest"] = (requestId, accept) => {
     const request = state.connections.find((connection) => connection.id === requestId);
     if (!request) return;
-    const updated = { ...request, status: accept ? "accepted" : "rejected", updatedAt: Date.now() } satisfies Connection;
-    const updatedUsers = accept
-      ? state.users.map((user) => {
-        if (user.id === request.senderId && !user.connections.includes(request.receiverId)) return { ...user, connections: [...user.connections, request.receiverId], updatedAt: Date.now() };
-        if (user.id === request.receiverId && !user.connections.includes(request.senderId)) return { ...user, connections: [...user.connections, request.senderId], updatedAt: Date.now() };
-        return user;
-      })
-      : state.users;
 
-    setState((snapshot) => ({
-      ...snapshot,
-      users: updatedUsers,
-      connections: snapshot.connections.map((connection) => connection.id === requestId ? updated : connection),
-    }));
-
-    commitOperation(queueFor("connections", "upsert", updated.id, updated));
-    updatedUsers
-      .filter((user) => user.id === request.senderId || user.id === request.receiverId)
-      .forEach((user) => commitOperation(queueFor("users", "upsert", user.id, user)));
+    if (accept) {
+      const updated = { ...request, status: "accepted" as const, updatedAt: Date.now() };
+      setState((snapshot) => ({
+        ...snapshot,
+        connections: snapshot.connections.map((c) => c.id === requestId ? updated : c),
+      }));
+      commitOperation(queueFor("connections", "upsert", updated.id, updated));
+    } else {
+      // Reject — remove from local state and delete from Firebase
+      setState((snapshot) => ({
+        ...snapshot,
+        connections: snapshot.connections.filter((c) => c.id !== requestId),
+      }));
+      commitOperation(queueFor("connections", "delete", request.id));
+    }
   };
 
   const addPost: AppContextValue["addPost"] = (input) => {
@@ -570,12 +556,12 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const deletePost = (id: string) => {
-    const operation = queueFor("posts", "delete", id);
+    // Hard-remove from local state immediately, then delete from Firebase
     setState((snapshot) => ({
       ...snapshot,
-      posts: snapshot.posts.map((post) => post.id === id && post.userId === currentUser?.id ? { ...post, deletedAt: Date.now(), updatedAt: Date.now(), dirty: true } : post),
+      posts: snapshot.posts.filter((post) => !(post.id === id && post.userId === currentUser?.id)),
     }));
-    commitOperation(operation);
+    commitOperation(queueFor("posts", "delete", id));
   };
 
   const updateUserSettings: AppContextValue["updateUserSettings"] = (patch) => {
@@ -603,13 +589,14 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     commitOperation(operation);
   };
 
+  /** Feed posts visible to current user — derived from connections collection */
   const visibleFeedPosts = useMemo(() => {
     if (!currentUser) return [];
-    const connectedIds = new Set(currentUser.connections);
+    const connectedIds = new Set(deriveAcceptedIds(state.connections, currentUser.id));
     return state.posts
-      .filter((post) => postVisibleTo(post, state.users.find((user) => user.id === post.userId), currentUser, connectedIds))
+      .filter((post) => !post.deletedAt && postVisibleTo(post, state.users.find((user) => user.id === post.userId), currentUser, connectedIds))
       .sort((a, b) => b.startTime - a.startTime);
-  }, [currentUser, state.posts, state.users]);
+  }, [currentUser, state.posts, state.users, state.connections]);
 
   const value: AppContextValue = {
     currentUser,
@@ -617,7 +604,6 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     posts: state.posts,
     connections: state.connections,
     settings: state.settings,
-    coverageAlerts: state.coverageAlerts,
     syncPendingCount: state.syncQueue.length,
     online,
     register,
@@ -628,22 +614,16 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     sendRequest,
     respondRequest,
     deleteConnection,
-    getConnections,
+    getAcceptedConnectionIds,
     getConnectionStatus,
     addPost,
     updatePost,
     deletePost,
     updateUserSettings,
     updateTheme,
-    runCoverageCheck,
     runRetentionCleanup,
     visibleFeedPosts,
   };
-
-  useEffect(() => {
-    const userAlerts = state.coverageAlerts.filter((alert) => alert.userId === currentUserId && !alert.seen);
-    if (userAlerts[0]) toast.warning("You missed logging activity for some time today");
-  }, [currentUserId, state.coverageAlerts]);
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 };

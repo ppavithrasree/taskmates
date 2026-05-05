@@ -7,17 +7,19 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
 const Friends = () => {
-  const { currentUser, users, connections, searchUsers, sendRequest, respondRequest, deleteConnection, getConnections, getConnectionStatus } = useApp();
+  const { currentUser, users, connections, searchUsers, sendRequest, respondRequest, deleteConnection, getAcceptedConnectionIds, getConnectionStatus } = useApp();
   const [query, setQuery] = useState("");
   const results = useMemo(() => searchUsers(query), [query, searchUsers]);
 
   if (!currentUser) return null;
+
   const incoming = connections.filter((connection) => connection.receiverId === currentUser.id && connection.status === "pending");
-  const people = getConnections(currentUser.id);
+  const connectedUserIds = getAcceptedConnectionIds(currentUser.id);
+  const people = users.filter((user) => connectedUserIds.includes(user.id));
 
   const request = (id: string) => {
     sendRequest(id);
-    toast.success("Connection request queued.");
+    toast.success("Connection request sent.");
   };
 
   const removeConnection = (userId: string) => {
@@ -39,7 +41,8 @@ const Friends = () => {
               ) : (
                 results.map((user) => {
                   const status = getConnectionStatus(user.id);
-                  const mutualCount = currentUser.connections.filter((id) => user.connections.includes(id)).length;
+                  const theirIds = getAcceptedConnectionIds(user.id);
+                  const mutualCount = connectedUserIds.filter((id) => theirIds.includes(id)).length;
                   return (
                     <PersonRow
                       key={user.id}
@@ -51,6 +54,8 @@ const Friends = () => {
                           <Button size="sm" onClick={() => request(user.id)}>
                             <UserPlus className="mr-1 size-4" /> Add
                           </Button>
+                        ) : status === "outgoing" ? (
+                          <span className="text-xs text-muted-foreground">Pending</span>
                         ) : null
                       }
                     />
@@ -72,7 +77,6 @@ const Friends = () => {
                   key={connection.id}
                   username={sender.username}
                   status="incoming"
-                  mutualCount={sender.connections.filter((id) => currentUser.connections.includes(id)).length}
                   action={
                     <div className="flex gap-1">
                       <Button size="icon" variant="outline" onClick={() => respondRequest(connection.id, true)}>
@@ -101,7 +105,6 @@ const Friends = () => {
                 key={user.id}
                 username={user.username}
                 status="connected"
-                mutualCount={currentUser.connections.filter((id) => user.connections.includes(id)).length}
                 action={
                   <Button size="sm" variant="destructive" onClick={() => removeConnection(user.id)}>
                     <Trash2 className="mr-1 size-4" /> Remove

@@ -190,5 +190,19 @@
 
   .tap-lift {
     @apply transition-smooth active:scale-[0.98];
+    -webkit-tap-highlight-color: transparent;
   }
-}
+
+  /* Disable text selection on interactive elements for app-like feel */
+  button, a, nav, .tap-lift {
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  /* Remove hover effects globally — app-first, not website */
+  @media (hover: hover) {
+    .tap-lift:hover {
+      transform: none;
+    }
+  }
+}
