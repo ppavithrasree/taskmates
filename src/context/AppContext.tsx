@@ -318,18 +318,41 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   }, [currentUserId]);
 
   // Show native notification when new notifications arrive from Firebase
-  const prevNotifCountRef = useRef(0);
+  const seenNotifIdsRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     if (!currentUser) return;
     const myNotifs = state.notifications.filter((n) => n.recipientId === currentUser.id);
-    if (myNotifs.length > prevNotifCountRef.current && prevNotifCountRef.current > 0) {
-      const newest = myNotifs.sort((a, b) => b.createdAt - a.createdAt)[0];
-      if (newest) {
-        void showLocalNotification(newest.title, newest.body);
+
+    // Find truly new notifications (not seen before)
+    const newNotifs = myNotifs.filter((n) => !seenNotifIdsRef.current.has(n.id));
+
+    // Show a local notification for each new one (skip on initial load by checking if we've initialized)
+    if (seenNotifIdsRef.current.size > 0 && newNotifs.length > 0) {
+      for (const notif of newNotifs) {
+        // Only show if it's recent (within last 30 seconds) to avoid showing old notifications on reload
+        if (Date.now() - notif.createdAt < 30_000) {
+          void showLocalNotification(notif.title, notif.body);
+        }
       }
     }
-    prevNotifCountRef.current = myNotifs.length;
+
+    // Update the seen set
+    seenNotifIdsRef.current = new Set(myNotifs.map((n) => n.id));
   }, [state.notifications, currentUser]);
+
+  // Initialize FCM push notifications (for when app is closed/background)
+  useEffect(() => {
+    if (!currentUser) return;
+    let cancelled = false;
+    import("@/lib/pushNotifications").then(({ initPushNotifications }) => {
+      if (cancelled) return;
+      void initPushNotifications(currentUser.id, (title, body) => {
+        // When a push is received while app is in foreground, show local notification
+        void showLocalNotification(title, body);
+      });
+    }).catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [currentUser]);
 
   // Clean up old notifications (>10 days) from Firebase
   useEffect(() => {
