@@ -1,6 +1,6 @@
 import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import type { AppState, AuthResult, Connection, Post, User, Visibility } from "@/types";
+import type { AppState, AuthResult, Connection, Group, GroupMessage, Post, SyncCollection, User, Visibility } from "@/types";
 import {
   firebaseChangePassword,
   firebaseCreateAccount,
@@ -25,6 +25,8 @@ interface AppContextValue {
   users: User[];
   posts: Post[];
   connections: Connection[];
+  groups: Group[];
+  groupMessages: GroupMessage[];
   settings: AppState["settings"];
   syncPendingCount: number;
   online: boolean;
@@ -38,6 +40,11 @@ interface AppContextValue {
   deleteConnection: (userId: string) => void;
   getAcceptedConnectionIds: (userId: string) => string[];
   getConnectionStatus: (otherId: string) => "self" | "connected" | "incoming" | "outgoing" | "none";
+  createGroup: (input: { name: string; memberIds: string[] }) => AuthResult;
+  addGroupMembers: (groupId: string, memberIds: string[]) => AuthResult;
+  removeGroupMember: (groupId: string, memberId: string) => AuthResult;
+  exitGroup: (groupId: string) => AuthResult;
+  addGroupMessage: (groupId: string, content: string) => AuthResult;
   addPost: (input: { startTime: number; endTime: number; content: string; visibility?: Visibility; customUsernames?: string[] }) => AuthResult;
   updatePost: (id: string, patch: Partial<Pick<Post, "startTime" | "endTime" | "content" | "visibility" | "customUsernames">>) => AuthResult;
   deletePost: (id: string) => void;
@@ -45,6 +52,7 @@ interface AppContextValue {
   updateTheme: (theme: "light" | "dark") => void;
   runRetentionCleanup: () => void;
   visibleFeedPosts: Post[];
+  visibleGroups: Group[];
 }
 
 const AppContext = createContext<AppContextValue | null>(null);
@@ -57,6 +65,8 @@ const emptyState = (): AppState => ({
   users: [],
   posts: [],
   connections: [],
+  groups: [],
+  groupMessages: [],
   syncQueue: [],
   settings: { theme: DEFAULT_THEME },
 });
@@ -108,6 +118,8 @@ const load = (): AppState => {
       ...parsed,
       posts: (parsed.posts ?? []).filter((p) => !p.deletedAt),
       connections: (parsed.connections ?? []).filter((c) => c.status !== "rejected"),
+      groups: parsed.groups ?? [],
+      groupMessages: parsed.groupMessages ?? [],
       settings: nextSettings,
     };
   } catch {
@@ -115,7 +127,7 @@ const load = (): AppState => {
   }
 };
 
-const queueFor = (collection: "users" | "posts" | "connections", type: "upsert" | "delete", entityId: string, payload?: unknown) => ({
+const queueFor = (collection: SyncCollection, type: "upsert" | "delete", entityId: string, payload?: unknown) => ({
   id: uid("sync"),
   collection,
   type,
@@ -270,6 +282,8 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
           users: remote.users ? mergeByFreshness(snapshot.users, remote.users) : snapshot.users,
           posts: nextPosts,
           connections: nextConnections,
+          groups: remote.groups ? mergeByFreshness(snapshot.groups, remote.groups) : snapshot.groups,
+          groupMessages: remote.groupMessages ? mergeByFreshness(snapshot.groupMessages, remote.groupMessages) : snapshot.groupMessages,
         };
       });
     });
@@ -530,6 +544,96 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
+  const createGroup: AppContextValue["createGroup"] = (input) => {
+    if (!currentUser) return { ok: false, error: "Sign in first." };
+    const name = input.name.trim();
+    if (name.length < 2) return { ok: false, error: "Add a group name." };
+
+    const connectedIds = new Set(deriveAcceptedIds(state.connections, currentUser.id));
+    const memberIds = [...new Set([currentUser.id, ...input.memberIds.filter((id) => connectedIds.has(id))])];
+    if (memberIds.length < 2) return { ok: false, error: "Select at least one connection." };
+
+    const now = Date.now();
+    const group: Group = {
+      id: uid("g"),
+      name,
+      memberIds,
+      createdBy: currentUser.id,
+      createdAt: now,
+      updatedAt: now,
+      dirty: true,
+    };
+    setState((snapshot) => ({ ...snapshot, groups: [group, ...snapshot.groups] }));
+    commitOperation(queueFor("groups", "upsert", group.id, group));
+    return { ok: true };
+  };
+
+  const addGroupMembers: AppContextValue["addGroupMembers"] = (groupId, memberIds) => {
+    if (!currentUser) return { ok: false, error: "Sign in first." };
+    const group = state.groups.find((item) => item.id === groupId);
+    if (!group || !group.memberIds.includes(currentUser.id)) return { ok: false, error: "Group not found." };
+
+    const connectedIds = new Set(deriveAcceptedIds(state.connections, currentUser.id));
+    const nextMemberIds = [...new Set([...group.memberIds, ...memberIds.filter((id) => connectedIds.has(id))])];
+    if (nextMemberIds.length === group.memberIds.length) return { ok: false, error: "No new connections selected." };
+
+    const updated = { ...group, memberIds: nextMemberIds, updatedAt: Date.now(), dirty: true };
+    setState((snapshot) => ({
+      ...snapshot,
+      groups: snapshot.groups.map((item) => item.id === groupId ? updated : item),
+    }));
+    commitOperation(queueFor("groups", "upsert", updated.id, updated));
+    return { ok: true };
+  };
+
+  const removeGroupMember: AppContextValue["removeGroupMember"] = (groupId, memberId) => {
+    if (!currentUser) return { ok: false, error: "Sign in first." };
+    const group = state.groups.find((item) => item.id === groupId);
+    if (!group || !group.memberIds.includes(currentUser.id)) return { ok: false, error: "Group not found." };
+    if (!group.memberIds.includes(memberId)) return { ok: false, error: "User is not in this group." };
+
+    const updated = { ...group, memberIds: group.memberIds.filter((id) => id !== memberId), updatedAt: Date.now(), dirty: true };
+    setState((snapshot) => ({
+      ...snapshot,
+      groups: snapshot.groups.map((item) => item.id === groupId ? updated : item),
+    }));
+    commitOperation(queueFor("groups", "upsert", updated.id, updated));
+    return { ok: true };
+  };
+
+  const exitGroup: AppContextValue["exitGroup"] = (groupId) => {
+    if (!currentUser) return { ok: false, error: "Sign in first." };
+    return removeGroupMember(groupId, currentUser.id);
+  };
+
+  const addGroupMessage: AppContextValue["addGroupMessage"] = (groupId, content) => {
+    if (!currentUser) return { ok: false, error: "Sign in first." };
+    const group = state.groups.find((item) => item.id === groupId);
+    if (!group || !group.memberIds.includes(currentUser.id)) return { ok: false, error: "Group not found." };
+    const clean = content.trim();
+    if (!clean) return { ok: false, error: "Type a message first." };
+
+    const now = Date.now();
+    const message: GroupMessage = {
+      id: uid("gm"),
+      groupId,
+      senderId: currentUser.id,
+      content: clean,
+      createdAt: now,
+      updatedAt: now,
+      dirty: true,
+    };
+    const updatedGroup = { ...group, updatedAt: now, dirty: true };
+    setState((snapshot) => ({
+      ...snapshot,
+      groupMessages: [...snapshot.groupMessages, message],
+      groups: snapshot.groups.map((item) => item.id === groupId ? updatedGroup : item),
+    }));
+    commitOperation(queueFor("groupMessages", "upsert", message.id, message));
+    commitOperation(queueFor("groups", "upsert", updatedGroup.id, updatedGroup));
+    return { ok: true };
+  };
+
   const addPost: AppContextValue["addPost"] = (input) => {
     if (!currentUser) return { ok: false, error: "Sign in first." };
     if (input.startTime > Date.now() || input.endTime > Date.now()) return { ok: false, error: "Future activity cannot be posted." };
@@ -598,11 +702,20 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       .sort((a, b) => b.startTime - a.startTime);
   }, [currentUser, state.posts, state.users, state.connections]);
 
+  const visibleGroups = useMemo(() => {
+    if (!currentUser) return [];
+    return state.groups
+      .filter((group) => group.memberIds.includes(currentUser.id))
+      .sort((a, b) => b.updatedAt - a.updatedAt);
+  }, [currentUser, state.groups]);
+
   const value: AppContextValue = {
     currentUser,
     users: state.users,
     posts: state.posts,
     connections: state.connections,
+    groups: state.groups,
+    groupMessages: state.groupMessages,
     settings: state.settings,
     syncPendingCount: state.syncQueue.length,
     online,
@@ -616,6 +729,11 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     deleteConnection,
     getAcceptedConnectionIds,
     getConnectionStatus,
+    createGroup,
+    addGroupMembers,
+    removeGroupMember,
+    exitGroup,
+    addGroupMessage,
     addPost,
     updatePost,
     deletePost,
@@ -623,6 +741,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     updateTheme,
     runRetentionCleanup,
     visibleFeedPosts,
+    visibleGroups,
   };
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

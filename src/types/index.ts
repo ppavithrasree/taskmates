@@ -40,14 +40,36 @@ export interface Connection {
   updatedAt: number;
 }
 
+export interface Group {
+  id: string;
+  name: string;
+  memberIds: string[];
+  createdBy: string;
+  createdAt: number;
+  updatedAt: number;
+  dirty?: boolean;
+}
+
+export interface GroupMessage {
+  id: string;
+  groupId: string;
+  senderId: string;
+  content: string;
+  createdAt: number;
+  updatedAt: number;
+  dirty?: boolean;
+}
+
 export interface TimeGap {
   start: number;
   end: number;
 }
 
+export type SyncCollection = "users" | "posts" | "connections" | "groups" | "groupMessages";
+
 export interface SyncOperation {
   id: string;
-  collection: "users" | "posts" | "connections";
+  collection: SyncCollection;
   type: "upsert" | "delete";
   entityId: string;
   payload?: unknown;
@@ -63,6 +85,8 @@ export interface AppState {
   users: User[];
   posts: Post[];
   connections: Connection[];
+  groups: Group[];
+  groupMessages: GroupMessage[];
   syncQueue: SyncOperation[];
   settings: AppSettings;
 }

@@ -8,6 +8,7 @@ import Index from "./pages/Index.tsx";
 import AuthPage from "./pages/AuthPage.tsx";
 import Dashboard from "./pages/Dashboard.tsx";
 import Friends from "./pages/Friends.tsx";
+import Groups from "./pages/Groups.tsx";
 import Profile from "./pages/Profile.tsx";
 import Settings from "./pages/Settings.tsx";
 import NotFound from "./pages/NotFound.tsx";
@@ -27,6 +28,8 @@ const App = () => (
             <Route path="/register" element={<AuthPage mode="register" />} />
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/friends" element={<Friends />} />
+            <Route path="/groups" element={<Groups />} />
+            <Route path="/groups/:groupId" element={<Groups />} />
             <Route path="/profile" element={<Profile />} />
             <Route path="/profile/:username" element={<Profile />} />
             <Route path="/settings" element={<Settings />} />

@@ -23,6 +23,7 @@ const Profile = () => {
   const retained = visiblePosts.filter((post) => post.endTime >= cutoff);
   const stats = activityStats(retained);
   const connectionCount = target ? getAcceptedConnectionIds(target.id).length : 0;
+  const privacyLabel = target?.privacy === "custom" ? "Custom users" : target?.privacy ?? "";
 
   if (!currentUser) return null;
 
@@ -68,7 +69,7 @@ const Profile = () => {
 
         <section className="grid grid-cols-3 gap-3">
           <Info icon={Timer} label="Today coverage" value={`${stats.coveragePercent}%`} />
-          <Info icon={Shield} label="Privacy" value={target.privacy} />
+          <Info icon={Shield} label="Privacy" value={privacyLabel} />
           <Info icon={Users} label="Connections" value={`${connectionCount}`} />
         </section>
 
@@ -86,9 +87,9 @@ const Profile = () => {
 };
 
 const Info = ({ icon: Icon, label, value }: { icon: typeof Timer; label: string; value: string }) => (
-  <div className="rounded-lg border border-border bg-card p-4 shadow-soft">
+  <div className="min-w-0 rounded-lg border border-border bg-card p-3 shadow-soft sm:p-4">
     <Icon className="mb-2 size-4 text-accent" />
-    <p className="text-xl font-black capitalize">{value}</p>
+    <p className="break-words text-sm font-black capitalize leading-tight min-[360px]:text-base sm:text-xl">{value}</p>
     <p className="text-xs text-muted-foreground">{label}</p>
   </div>
 );

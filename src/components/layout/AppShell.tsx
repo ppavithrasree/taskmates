@@ -1,6 +1,6 @@
 import { ReactNode } from "react";
 import { NavLink, Navigate, useNavigate } from "react-router-dom";
-import { LayoutDashboard, LogOut, Search, Settings, User } from "lucide-react";
+import { LayoutDashboard, LogOut, Search, Settings, User, UsersRound } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 const navItems = [
   { title: "Feed", url: "/dashboard", icon: LayoutDashboard },
   { title: "Search", url: "/friends", icon: Search },
+  { title: "Groups", url: "/groups", icon: UsersRound },
   { title: "Profile", url: "/profile", icon: User },
   { title: "Settings", url: "/settings", icon: Settings },
 ];
@@ -38,7 +39,7 @@ export const AppShell = ({ children, title }: { children: ReactNode; title?: str
       </header>
       <main className="animate-fade-in-up pb-24">{children}</main>
       <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-card/95 px-2 pb-[calc(env(safe-area-inset-bottom)+0.4rem)] pt-2 backdrop-blur">
-        <div className="mx-auto grid max-w-md grid-cols-4 gap-1">
+        <div className="mx-auto grid max-w-md grid-cols-5 gap-1">
           {navItems.map((item) => (
             <NavLink
               key={item.url}

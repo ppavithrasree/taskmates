@@ -1,7 +1,7 @@
 import type { FirebaseApp, FirebaseOptions } from "firebase/app";
 import type { Auth, User as FirebaseAuthUser } from "firebase/auth";
 import type { Firestore, Unsubscribe } from "firebase/firestore";
-import type { Connection, FirebaseConfig, Post, SyncOperation, User } from "@/types";
+import type { Connection, FirebaseConfig, Group, GroupMessage, Post, SyncOperation, User } from "@/types";
 
 const env = import.meta.env;
 
@@ -147,7 +147,7 @@ export const pushSyncOperation = async (operation: SyncOperation) => {
 };
 
 export const subscribeFirebaseState = (
-  onData: (data: { users?: User[]; posts?: Post[]; connections?: Connection[] }) => void
+  onData: (data: { users?: User[]; posts?: Post[]; connections?: Connection[]; groups?: Group[]; groupMessages?: GroupMessage[] }) => void
 ) => {
   if (!hasFirebaseConfig) return () => undefined;
   let closed = false;
@@ -166,6 +166,12 @@ export const subscribeFirebaseState = (
       }, () => undefined),
       onSnapshot(collection(services.db, "connections"), (snapshot) => {
         onData({ connections: snapshot.docs.map((item) => normalizeEntity<Connection>(item.id, item.data())) });
+      }, () => undefined),
+      onSnapshot(collection(services.db, "groups"), (snapshot) => {
+        onData({ groups: snapshot.docs.map((item) => normalizeEntity<Group>(item.id, item.data())) });
+      }, () => undefined),
+      onSnapshot(collection(services.db, "groupMessages"), (snapshot) => {
+        onData({ groupMessages: snapshot.docs.map((item) => normalizeEntity<GroupMessage>(item.id, item.data())) });
       }, () => undefined),
     ];
   });
