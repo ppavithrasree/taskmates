@@ -1,7 +1,7 @@
 import type { FirebaseApp, FirebaseOptions } from "firebase/app";
 import type { Auth, User as FirebaseAuthUser } from "firebase/auth";
 import type { Firestore, Unsubscribe } from "firebase/firestore";
-import type { Connection, FirebaseConfig, Group, GroupMessage, Post, SyncOperation, User } from "@/types";
+import type { AppNotification, Connection, FirebaseConfig, Group, GroupMessage, Post, SyncOperation, User } from "@/types";
 
 const env = import.meta.env;
 
@@ -147,7 +147,14 @@ export const pushSyncOperation = async (operation: SyncOperation) => {
 };
 
 export const subscribeFirebaseState = (
-  onData: (data: { users?: User[]; posts?: Post[]; connections?: Connection[]; groups?: Group[]; groupMessages?: GroupMessage[] }) => void
+  onData: (data: {
+    users?: User[];
+    posts?: Post[];
+    connections?: Connection[];
+    groups?: Group[];
+    groupMessages?: GroupMessage[];
+    notifications?: AppNotification[];
+  }) => void
 ) => {
   if (!hasFirebaseConfig) return () => undefined;
   let closed = false;
@@ -173,6 +180,9 @@ export const subscribeFirebaseState = (
       onSnapshot(collection(services.db, "groupMessages"), (snapshot) => {
         onData({ groupMessages: snapshot.docs.map((item) => normalizeEntity<GroupMessage>(item.id, item.data())) });
       }, () => undefined),
+      onSnapshot(collection(services.db, "notifications"), (snapshot) => {
+        onData({ notifications: snapshot.docs.map((item) => normalizeEntity<AppNotification>(item.id, item.data())) });
+      }, () => undefined),
     ];
   });
 
@@ -180,4 +190,23 @@ export const subscribeFirebaseState = (
     closed = true;
     unsubs.forEach((unsubscribe) => unsubscribe());
   };
+};
+
+/** Check if a set of post IDs exist in Firebase; returns the IDs that do NOT exist */
+export const checkFirebasePostsExist = async (postIds: string[]): Promise<string[]> => {
+  if (!postIds.length) return [];
+  const services = await getServices();
+  if (!services || !services.auth.currentUser) return [];
+  const { doc, getDoc } = await import("firebase/firestore");
+  const missing: string[] = [];
+  // Check in batches to avoid excessive reads
+  for (const id of postIds.slice(0, 50)) {
+    try {
+      const snapshot = await getDoc(doc(services.db, "posts", id));
+      if (!snapshot.exists()) missing.push(id);
+    } catch {
+      // If we can't check, don't remove
+    }
+  }
+  return missing;
 };

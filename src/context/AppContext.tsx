@@ -1,6 +1,6 @@
-import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import type { AppState, AuthResult, Connection, Group, GroupMessage, Post, SyncCollection, User, Visibility } from "@/types";
+import type { AppNotification, AppState, AuthResult, Connection, Group, GroupMessage, Post, SyncCollection, User, Visibility } from "@/types";
 import {
   firebaseChangePassword,
   firebaseCreateAccount,
@@ -11,9 +11,10 @@ import {
   firebaseSignOut,
   subscribeFirebaseState,
   usernameToEmail,
+  checkFirebasePostsExist,
 } from "@/lib/firebaseSync";
-import { analyzeDayCoverage, dateKey, isValidPostRange, postsInLocalDay, previousLocalDayRange, startOfLocalDay } from "@/lib/timeCoverage";
-import { scheduleDailyMidnightNotification } from "@/lib/notifications";
+import { analyzeDayCoverage, isValidPostRange, postsInLocalDay, startOfLocalDay, gapLabel } from "@/lib/timeCoverage";
+import { requestNotificationPermission, scheduleDailyMidnightNotification, showLocalNotification } from "@/lib/notifications";
 
 const LS_KEY = "taskmates_activity_state_v1";
 const SESSION_KEY = "taskmates_activity_session_v1";
@@ -27,6 +28,7 @@ interface AppContextValue {
   connections: Connection[];
   groups: Group[];
   groupMessages: GroupMessage[];
+  notifications: AppNotification[];
   settings: AppState["settings"];
   syncPendingCount: number;
   online: boolean;
@@ -45,12 +47,18 @@ interface AppContextValue {
   removeGroupMember: (groupId: string, memberId: string) => AuthResult;
   exitGroup: (groupId: string) => AuthResult;
   addGroupMessage: (groupId: string, content: string) => AuthResult;
+  toggleMuteGroup: (groupId: string) => void;
+  isGroupMuted: (groupId: string) => boolean;
   addPost: (input: { startTime: number; endTime: number; content: string; visibility?: Visibility; customUsernames?: string[] }) => AuthResult;
   updatePost: (id: string, patch: Partial<Pick<Post, "startTime" | "endTime" | "content" | "visibility" | "customUsernames">>) => AuthResult;
   deletePost: (id: string) => void;
   updateUserSettings: (patch: Partial<Pick<User, "privacy" | "customUsernames" | "retentionDays">>) => void;
   updateTheme: (theme: "light" | "dark") => void;
   runRetentionCleanup: () => void;
+  markNotificationsRead: () => void;
+  unreadNotificationCount: number;
+  pendingRequestCount: number;
+  unreadGroupCount: number;
   visibleFeedPosts: Post[];
   visibleGroups: Group[];
 }
@@ -67,6 +75,7 @@ const emptyState = (): AppState => ({
   connections: [],
   groups: [],
   groupMessages: [],
+  notifications: [],
   syncQueue: [],
   settings: { theme: DEFAULT_THEME },
 });
@@ -120,6 +129,7 @@ const load = (): AppState => {
       connections: (parsed.connections ?? []).filter((c) => c.status !== "rejected"),
       groups: parsed.groups ?? [],
       groupMessages: parsed.groupMessages ?? [],
+      notifications: parsed.notifications ?? [],
       settings: nextSettings,
     };
   } catch {
@@ -270,12 +280,29 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     return subscribeFirebaseState((remote) => {
       setState((snapshot) => {
         let nextPosts = remote.posts ? mergeByFreshness(snapshot.posts, remote.posts) : snapshot.posts;
-        // Remove any soft-deleted posts that Firebase has already deleted
         nextPosts = nextPosts.filter((p) => !p.deletedAt);
 
-        let nextConnections = remote.connections ? mergeByFreshness(snapshot.connections, remote.connections) : snapshot.connections;
-        // Remove rejected connections
+        // For connections, use Firebase as source of truth:
+        // Keep local dirty items (pending sync) + all remote items.
+        // This ensures deleted connections disappear for both users.
+        let nextConnections: Connection[];
+        if (remote.connections) {
+          const remoteMap = new Map(remote.connections.map((c) => [c.id, c]));
+          const dirtyLocal = snapshot.connections.filter((c) => (c as Connection & { dirty?: boolean }).dirty && !remoteMap.has(c.id));
+          nextConnections = [...remote.connections, ...dirtyLocal];
+        } else {
+          nextConnections = snapshot.connections;
+        }
         nextConnections = nextConnections.filter((c) => c.status !== "rejected");
+
+        // Merge notifications — only keep ones for current user and less than 10 days old
+        const tenDaysAgo = Date.now() - 10 * 86_400_000;
+        let nextNotifications = remote.notifications
+          ? mergeByFreshness(snapshot.notifications, remote.notifications)
+          : snapshot.notifications;
+        nextNotifications = nextNotifications.filter(
+          (n) => n.recipientId === currentUserId && n.createdAt > tenDaysAgo
+        );
 
         return {
           ...snapshot,
@@ -284,10 +311,58 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
           connections: nextConnections,
           groups: remote.groups ? mergeByFreshness(snapshot.groups, remote.groups) : snapshot.groups,
           groupMessages: remote.groupMessages ? mergeByFreshness(snapshot.groupMessages, remote.groupMessages) : snapshot.groupMessages,
+          notifications: nextNotifications,
         };
       });
     });
   }, [currentUserId]);
+
+  // Show native notification when new notifications arrive from Firebase
+  const prevNotifCountRef = useRef(0);
+  useEffect(() => {
+    if (!currentUser) return;
+    const myNotifs = state.notifications.filter((n) => n.recipientId === currentUser.id);
+    if (myNotifs.length > prevNotifCountRef.current && prevNotifCountRef.current > 0) {
+      const newest = myNotifs.sort((a, b) => b.createdAt - a.createdAt)[0];
+      if (newest) {
+        void showLocalNotification(newest.title, newest.body);
+      }
+    }
+    prevNotifCountRef.current = myNotifs.length;
+  }, [state.notifications, currentUser]);
+
+  // Clean up old notifications (>10 days) from Firebase
+  useEffect(() => {
+    const tenDaysAgo = Date.now() - 10 * 86_400_000;
+    const expired = state.notifications.filter((n) => n.createdAt <= tenDaysAgo);
+    if (expired.length === 0) return;
+    setState((snapshot) => ({
+      ...snapshot,
+      notifications: snapshot.notifications.filter((n) => n.createdAt > tenDaysAgo),
+    }));
+    for (const n of expired) {
+      commitOperation(queueFor("notifications", "delete", n.id));
+    }
+  }, [state.notifications, commitOperation]);
+
+  // Remove local posts that don't exist in Firebase anymore (privacy enforcement)
+  useEffect(() => {
+    if (!online || !currentUser) return;
+    const otherPosts = state.posts.filter((p) => p.userId !== currentUser.id && !p.dirty);
+    if (otherPosts.length === 0) return;
+    const timer = window.setTimeout(async () => {
+      const ids = otherPosts.map((p) => p.id);
+      const missing = await checkFirebasePostsExist(ids);
+      if (missing.length > 0) {
+        const missingSet = new Set(missing);
+        setState((snapshot) => ({
+          ...snapshot,
+          posts: snapshot.posts.filter((p) => !missingSet.has(p.id)),
+        }));
+      }
+    }, 5000);
+    return () => window.clearTimeout(timer);
+  }, [online, currentUser, state.posts]);
 
   /** Get accepted connection user IDs from connections collection (single source of truth) */
   const getAcceptedConnectionIds = useCallback(
@@ -339,14 +414,78 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     };
   }, [runRetentionCleanup]);
 
+  // Helper to create and push a notification to Firebase
+  const createNotification = useCallback(
+    (recipientId: string, type: AppNotification["type"], title: string, body: string, link?: string) => {
+      if (!currentUser || recipientId === currentUser.id) return;
+      const now = Date.now();
+      const notif: AppNotification = {
+        id: uid("notif"),
+        recipientId,
+        type,
+        title,
+        body,
+        link,
+        read: false,
+        createdAt: now,
+        updatedAt: now,
+      };
+      setState((snapshot) => ({
+        ...snapshot,
+        notifications: [...snapshot.notifications, notif],
+      }));
+      commitOperation(queueFor("notifications", "upsert", notif.id, notif));
+    },
+    [currentUser, commitOperation]
+  );
+
+  // Request notification permission on first login
+  useEffect(() => {
+    if (!currentUser) return;
+    void requestNotificationPermission();
+  }, [currentUser]);
+
   // Schedule daily midnight notification for coverage gaps
   useEffect(() => {
     if (!currentUser) return;
     const todayStart = startOfLocalDay(Date.now());
     const todayPosts = postsInLocalDay(state.posts, currentUser.id, todayStart);
     const coverage = analyzeDayCoverage(todayPosts, todayStart);
-    scheduleDailyMidnightNotification(!coverage.isComplete);
-  }, [currentUser, state.posts]);
+    const gapList = coverage.gaps.length > 0 ? coverage.gaps.map(gapLabel).join(", ") : undefined;
+    scheduleDailyMidnightNotification(!coverage.isComplete, gapList);
+
+    // Also create a Firebase notification at midnight for gaps
+    const scheduleMidnightCheck = () => {
+      const next = new Date();
+      next.setDate(next.getDate() + 1);
+      next.setHours(0, 0, 0, 0);
+      return window.setTimeout(() => {
+        const dayStart = startOfLocalDay(Date.now());
+        const dayPosts = postsInLocalDay(state.posts, currentUser.id, dayStart);
+        const dayCoverage = analyzeDayCoverage(dayPosts, dayStart);
+        if (!dayCoverage.isComplete) {
+          const gaps = dayCoverage.gaps.map(gapLabel).join(", ");
+          // Create a self-notification stored in Firebase
+          const now = Date.now();
+          const notif: AppNotification = {
+            id: uid("notif"),
+            recipientId: currentUser.id,
+            type: "unlogged_gaps",
+            title: "Unlogged Activity Gaps",
+            body: `You forgot to log: ${gaps}`,
+            link: "/dashboard",
+            read: false,
+            createdAt: now,
+            updatedAt: now,
+          };
+          setState((s) => ({ ...s, notifications: [...s.notifications, notif] }));
+          commitOperation(queueFor("notifications", "upsert", notif.id, notif));
+        }
+      }, Math.max(1000, next.getTime() - Date.now()));
+    };
+    const timer = scheduleMidnightCheck();
+    return () => window.clearTimeout(timer);
+  }, [currentUser, state.posts, commitOperation]);
 
   const register: AppContextValue["register"] = async (username, password, confirmPassword) => {
     const clean = username.trim().toLowerCase();
@@ -492,6 +631,8 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       connections: [...snapshot.connections, connection],
     }));
     commitOperation(operation);
+    // Notify the receiver
+    createNotification(toId, "connection_request", "New Connection Request", `${currentUser.username} sent you a connection request.`, "/friends");
   };
 
   const deleteConnection: AppContextValue["deleteConnection"] = (userId) => {
@@ -525,7 +666,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
 
   const respondRequest: AppContextValue["respondRequest"] = (requestId, accept) => {
     const request = state.connections.find((connection) => connection.id === requestId);
-    if (!request) return;
+    if (!request || !currentUser) return;
 
     if (accept) {
       const updated = { ...request, status: "accepted" as const, updatedAt: Date.now() };
@@ -534,8 +675,9 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         connections: snapshot.connections.map((c) => c.id === requestId ? updated : c),
       }));
       commitOperation(queueFor("connections", "upsert", updated.id, updated));
+      // Notify the original sender that their request was accepted
+      createNotification(request.senderId, "connection_accepted", "Connection Accepted", `${currentUser.username} accepted your connection request.`, "/friends");
     } else {
-      // Reject — remove from local state and delete from Firebase
       setState((snapshot) => ({
         ...snapshot,
         connections: snapshot.connections.filter((c) => c.id !== requestId),
@@ -631,7 +773,40 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     }));
     commitOperation(queueFor("groupMessages", "upsert", message.id, message));
     commitOperation(queueFor("groups", "upsert", updatedGroup.id, updatedGroup));
+
+    // Notify all group members except sender (skip muted users)
+    for (const memberId of group.memberIds) {
+      if (memberId === currentUser.id) continue;
+      const member = state.users.find((u) => u.id === memberId);
+      const isMuted = member?.mutedGroupIds?.includes(groupId) ?? false;
+      if (!isMuted) {
+        createNotification(
+          memberId,
+          "group_message",
+          group.name,
+          `${currentUser.username}: ${clean.slice(0, 100)}`,
+          `/groups/${groupId}`
+        );
+      }
+    }
     return { ok: true };
+  };
+
+  const toggleMuteGroup: AppContextValue["toggleMuteGroup"] = (groupId) => {
+    if (!currentUser) return;
+    const mutedIds = currentUser.mutedGroupIds ?? [];
+    const isMuted = mutedIds.includes(groupId);
+    const nextMutedIds = isMuted ? mutedIds.filter((id) => id !== groupId) : [...mutedIds, groupId];
+    const updated = { ...currentUser, mutedGroupIds: nextMutedIds, updatedAt: Date.now() };
+    setState((snapshot) => ({
+      ...snapshot,
+      users: snapshot.users.map((u) => u.id === currentUser.id ? updated : u),
+    }));
+    commitOperation(queueFor("users", "upsert", updated.id, updated));
+  };
+
+  const isGroupMuted: AppContextValue["isGroupMuted"] = (groupId) => {
+    return currentUser?.mutedGroupIds?.includes(groupId) ?? false;
   };
 
   const addPost: AppContextValue["addPost"] = (input) => {
@@ -693,6 +868,13 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     commitOperation(operation);
   };
 
+  const markNotificationsRead: AppContextValue["markNotificationsRead"] = () => {
+    setState((snapshot) => ({
+      ...snapshot,
+      settings: { ...snapshot.settings, notificationLastSeen: Date.now() },
+    }));
+  };
+
   /** Feed posts visible to current user — derived from connections collection */
   const visibleFeedPosts = useMemo(() => {
     if (!currentUser) return [];
@@ -709,6 +891,28 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       .sort((a, b) => b.updatedAt - a.updatedAt);
   }, [currentUser, state.groups]);
 
+  const myNotifications = useMemo(() => {
+    if (!currentUser) return [];
+    return state.notifications
+      .filter((n) => n.recipientId === currentUser.id)
+      .sort((a, b) => b.createdAt - a.createdAt);
+  }, [currentUser, state.notifications]);
+
+  const unreadNotificationCount = useMemo(() => {
+    const lastSeen = state.settings.notificationLastSeen ?? 0;
+    return myNotifications.filter((n) => n.createdAt > lastSeen).length;
+  }, [myNotifications, state.settings.notificationLastSeen]);
+
+  const pendingRequestCount = useMemo(() => {
+    if (!currentUser) return 0;
+    return state.connections.filter((c) => c.receiverId === currentUser.id && c.status === "pending").length;
+  }, [currentUser, state.connections]);
+
+  const unreadGroupCount = useMemo(() => {
+    if (!currentUser) return 0;
+    return myNotifications.filter((n) => n.type === "group_message" && n.createdAt > (state.settings.notificationLastSeen ?? 0)).length;
+  }, [currentUser, myNotifications, state.settings.notificationLastSeen]);
+
   const value: AppContextValue = {
     currentUser,
     users: state.users,
@@ -716,6 +920,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     connections: state.connections,
     groups: state.groups,
     groupMessages: state.groupMessages,
+    notifications: myNotifications,
     settings: state.settings,
     syncPendingCount: state.syncQueue.length,
     online,
@@ -734,12 +939,18 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     removeGroupMember,
     exitGroup,
     addGroupMessage,
+    toggleMuteGroup,
+    isGroupMuted,
     addPost,
     updatePost,
     deletePost,
     updateUserSettings,
     updateTheme,
     runRetentionCleanup,
+    markNotificationsRead,
+    unreadNotificationCount,
+    pendingRequestCount,
+    unreadGroupCount,
     visibleFeedPosts,
     visibleGroups,
   };

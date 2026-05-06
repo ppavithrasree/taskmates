@@ -1,6 +1,6 @@
 import { FormEvent, ReactNode, useMemo, useState } from "react";
 import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, Check, Info, LogOut, Plus, Send, Trash2, UserPlus, UsersRound } from "lucide-react";
+import { ArrowLeft, Bell, BellOff, Check, Info, LogOut, Plus, Send, Trash2, UserPlus, UsersRound } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/components/layout/AppShell";
 import { useApp } from "@/context/AppContext";
@@ -115,6 +115,8 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
     addGroupMembers,
     removeGroupMember,
     exitGroup,
+    toggleMuteGroup,
+    isGroupMuted,
   } = useApp();
   const navigate = useNavigate();
   const [message, setMessage] = useState("");
@@ -253,6 +255,19 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
               />
             ))}
           </div>
+          <button
+            type="button"
+            onClick={() => { toggleMuteGroup(group.id); toast.success(isGroupMuted(group.id) ? "Notifications unmuted." : "Notifications muted."); }}
+            className="flex w-full items-center justify-between gap-3 rounded-lg border border-border bg-card p-3 shadow-soft transition-smooth"
+          >
+            <div className="flex items-center gap-3">
+              {isGroupMuted(group.id) ? <BellOff className="size-4 text-muted-foreground" /> : <Bell className="size-4 text-primary" />}
+              <span className="text-sm font-bold">{isGroupMuted(group.id) ? "Unmute notifications" : "Mute notifications"}</span>
+            </div>
+            <span className={`text-xs font-bold ${isGroupMuted(group.id) ? "text-destructive" : "text-success"}`}>
+              {isGroupMuted(group.id) ? "Muted" : "Active"}
+            </span>
+          </button>
           <Button variant="destructive" onClick={leave}>
             <LogOut className="mr-2 size-4" /> Exit group
           </Button>

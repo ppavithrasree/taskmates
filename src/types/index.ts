@@ -10,6 +10,7 @@ export interface User {
   customUsernames: string[];
   retentionDays: number;
   theme?: "light" | "dark";
+  mutedGroupIds?: string[];
   createdAt: number;
   updatedAt: number;
   passwordHash?: string;
@@ -60,12 +61,29 @@ export interface GroupMessage {
   dirty?: boolean;
 }
 
+export type NotificationType = "connection_request" | "connection_accepted" | "unlogged_gaps" | "group_message";
+
+export interface AppNotification {
+  id: string;
+  /** The user who will receive this notification */
+  recipientId: string;
+  type: NotificationType;
+  title: string;
+  body: string;
+  /** Optional link to navigate to when tapped */
+  link?: string;
+  /** Whether the user has seen this notification */
+  read?: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface TimeGap {
   start: number;
   end: number;
 }
 
-export type SyncCollection = "users" | "posts" | "connections" | "groups" | "groupMessages";
+export type SyncCollection = "users" | "posts" | "connections" | "groups" | "groupMessages" | "notifications";
 
 export interface SyncOperation {
   id: string;
@@ -79,6 +97,7 @@ export interface SyncOperation {
 export interface AppSettings {
   theme: "light" | "dark";
   lastRetentionRun?: number;
+  notificationLastSeen?: number;
 }
 
 export interface AppState {
@@ -87,6 +106,7 @@ export interface AppState {
   connections: Connection[];
   groups: Group[];
   groupMessages: GroupMessage[];
+  notifications: AppNotification[];
   syncQueue: SyncOperation[];
   settings: AppSettings;
 }
