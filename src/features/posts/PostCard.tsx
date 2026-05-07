@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { Clock3, Globe2, Pencil, Trash2, Users } from "lucide-react";
 import { toast } from "sonner";
@@ -20,10 +20,36 @@ export const PostCard = ({ post }: { post: Post }) => {
   const { currentUser, users, deletePost } = useApp();
   const [editOpen, setEditOpen] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const editHistoryRef = useRef(false);
   const author = users.find((user) => user.id === post.userId);
   const isMine = currentUser?.id === post.userId;
   const meta = visibility[post.visibility ?? author?.privacy ?? "public"];
   const Icon = meta.icon;
+
+  useEffect(() => {
+    if (!editOpen || editHistoryRef.current) return;
+    window.history.pushState({ ...window.history.state, taskmatesModal: "edit-activity" }, "", window.location.href);
+    editHistoryRef.current = true;
+  }, [editOpen]);
+
+  useEffect(() => {
+    const onPopState = () => {
+      if (!editHistoryRef.current) return;
+      editHistoryRef.current = false;
+      setEditOpen(false);
+    };
+
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
+
+  const closeEdit = () => {
+    if (editHistoryRef.current) {
+      editHistoryRef.current = false;
+      window.history.back();
+    }
+    setEditOpen(false);
+  };
 
   return (
     <article className="tap-lift animate-fade-in-up rounded-lg border border-border bg-card p-4 shadow-soft">
@@ -56,10 +82,10 @@ export const PostCard = ({ post }: { post: Post }) => {
         </footer>
       )}
 
-      <Dialog open={editOpen} onOpenChange={setEditOpen}>
-        <DialogContent className="rounded-lg">
+      <Dialog open={editOpen} onOpenChange={(nextOpen) => nextOpen ? setEditOpen(true) : closeEdit()}>
+        <DialogContent className="max-h-[90dvh] overflow-y-auto rounded-lg">
           <DialogHeader><DialogTitle>Edit activity</DialogTitle></DialogHeader>
-          <PostForm initial={post} onClose={() => setEditOpen(false)} onSaved={() => setEditOpen(false)} />
+          <PostForm initial={post} onClose={closeEdit} onSaved={closeEdit} />
         </DialogContent>
       </Dialog>
 

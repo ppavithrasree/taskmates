@@ -51,6 +51,7 @@ interface AppContextValue {
   addGroupMessage: (groupId: string, content: string) => AuthResult;
   markGroupMessagesRead: (groupId: string) => void;
   markGroupNotificationsRead: (groupId: string) => void;
+  markNotificationsForLinkRead: (link: string) => void;
   toggleMuteGroup: (groupId: string) => void;
   isGroupMuted: (groupId: string) => boolean;
   addPost: (input: { startTime: number; endTime: number; content: string; visibility?: Visibility; customUsernames?: string[] }) => AuthResult;
@@ -942,6 +943,24 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
+  const markNotificationsForLinkRead: AppContextValue["markNotificationsForLinkRead"] = useCallback((link) => {
+    if (!currentUser) return;
+    const changedNotifications = state.notifications
+      .filter((notification) => notification.recipientId === currentUser.id && notification.link === link && !notification.read)
+      .map((notification) => ({ ...notification, read: true, updatedAt: Date.now() }));
+
+    if (changedNotifications.length === 0) return;
+    const changedById = new Map(changedNotifications.map((notification) => [notification.id, notification]));
+    setState((snapshot) => ({
+      ...snapshot,
+      notifications: snapshot.notifications.map((notification) => changedById.get(notification.id) ?? notification),
+    }));
+
+    for (const notification of changedNotifications) {
+      commitOperation(queueFor("notifications", "upsert", notification.id, notification));
+    }
+  }, [currentUser, state.notifications, commitOperation]);
+
   const toggleMuteGroup: AppContextValue["toggleMuteGroup"] = (groupId) => {
     if (!currentUser) return;
     const mutedIds = currentUser.mutedGroupIds ?? [];
@@ -1101,6 +1120,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     addGroupMessage,
     markGroupMessagesRead,
     markGroupNotificationsRead,
+    markNotificationsForLinkRead,
     toggleMuteGroup,
     isGroupMuted,
     addPost,

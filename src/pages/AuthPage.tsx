@@ -50,7 +50,7 @@ const AuthPage = ({ mode }: Props) => {
       return;
     }
     toast.success(mode === "login" ? "Welcome back." : "Account created.");
-    navigate("/dashboard");
+    navigate("/dashboard", { replace: true });
   };
 
   return (

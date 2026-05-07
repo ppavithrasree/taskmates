@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, CalendarDays, Clock3, Plus } from "lucide-react";
 import { AppShell } from "@/components/layout/AppShell";
 import { PostCard } from "@/features/posts/PostCard";
@@ -12,9 +12,10 @@ import { Progress } from "@/components/ui/progress";
 import type { Post, User } from "@/types";
 
 const Dashboard = () => {
-  const { currentUser, users, posts, visibleFeedPosts } = useApp();
+  const { currentUser, users, posts, visibleFeedPosts, markNotificationsForLinkRead } = useApp();
   const [open, setOpen] = useState(false);
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
+  const logHistoryRef = useRef(false);
   const myPosts = useMemo(
     () => currentUser ? posts.filter((post) => post.userId === currentUser.id && !post.deletedAt) : [],
     [currentUser, posts]
@@ -36,6 +37,35 @@ const Dashboard = () => {
     [selectedUserId, visibleFeedPosts]
   );
   const selectedUserDays = useMemo(() => groupPostsByDay(selectedUserPosts), [selectedUserPosts]);
+
+  useEffect(() => {
+    markNotificationsForLinkRead("/dashboard");
+  }, [markNotificationsForLinkRead]);
+
+  useEffect(() => {
+    if (!open || logHistoryRef.current) return;
+    window.history.pushState({ ...window.history.state, taskmatesModal: "log-activity" }, "", window.location.href);
+    logHistoryRef.current = true;
+  }, [open]);
+
+  useEffect(() => {
+    const onPopState = () => {
+      if (!logHistoryRef.current) return;
+      logHistoryRef.current = false;
+      setOpen(false);
+    };
+
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
+
+  const closeLog = () => {
+    if (logHistoryRef.current) {
+      logHistoryRef.current = false;
+      window.history.back();
+    }
+    setOpen(false);
+  };
 
   if (!currentUser) return null;
 
@@ -111,10 +141,10 @@ const Dashboard = () => {
         </section>
       </div>
 
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog open={open} onOpenChange={(nextOpen) => nextOpen ? setOpen(true) : closeLog()}>
         <DialogContent className="max-h-[90dvh] overflow-y-auto rounded-lg">
           <DialogHeader><DialogTitle>Log activity</DialogTitle></DialogHeader>
-          <PostForm onClose={() => setOpen(false)} onSaved={() => setOpen(false)} />
+          <PostForm onClose={closeLog} onSaved={closeLog} />
         </DialogContent>
       </Dialog>
     </AppShell>

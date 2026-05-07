@@ -1,4 +1,4 @@
-import { FormEvent, ReactNode, useEffect, useMemo, useState } from "react";
+import { FormEvent, ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, Bell, BellOff, Check, CheckCheck, Info, LogOut, Pencil, Plus, Send, Trash2, UserPlus, UsersRound } from "lucide-react";
 import { toast } from "sonner";
@@ -58,9 +58,11 @@ const GroupsList = () => {
         ) : (
           <section className="space-y-2">
             {visibleGroups.map((group) => {
-              const lastMessage = groupMessages
-                .filter((message) => message.groupId === group.id)
-                .sort((a, b) => b.createdAt - a.createdAt)[0];
+              const groupItems = groupMessages.filter((message) => message.groupId === group.id);
+              const lastMessage = [...groupItems].sort((a, b) => b.createdAt - a.createdAt)[0];
+              const unreadCount = groupItems.filter(
+                (message) => message.senderId !== currentUser.id && !(message.readBy ?? [message.senderId]).includes(currentUser.id)
+              ).length;
               const sender = users.find((user) => user.id === lastMessage?.senderId);
               return (
                 <Link
@@ -76,9 +78,12 @@ const GroupsList = () => {
                         {lastMessage ? formatClockTime24(lastMessage.createdAt) : `${group.memberIds.length} members`}
                       </span>
                     </div>
-                    <p className="truncate text-sm text-muted-foreground">
-                      {lastMessage ? `${sender?.username ?? "Unknown"}: ${lastMessage.content}` : "Tap to start chatting"}
-                    </p>
+                    <div className="mt-1 flex items-center gap-3">
+                      <p className={`min-w-0 flex-1 truncate text-sm ${unreadCount > 0 ? "font-bold text-foreground" : "text-muted-foreground"}`}>
+                        {lastMessage ? `${sender?.username ?? "Unknown"}: ${lastMessage.content}` : "Tap to start chatting"}
+                      </p>
+                      <UnreadBadge count={unreadCount} />
+                    </div>
                   </div>
                 </Link>
               );
@@ -118,6 +123,8 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
   } = useApp();
   const [message, setMessage] = useState("");
   const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
+  const composerRef = useRef<HTMLTextAreaElement | null>(null);
+  const messagesRef = useRef<HTMLElement | null>(null);
 
   const group = groups.find((item) => item.id === groupId);
   const isMember = Boolean(currentUser && group?.memberIds.includes(currentUser.id));
@@ -134,6 +141,22 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
     markGroupNotificationsRead(group.id);
   }, [currentUser, group, isMember, markGroupMessagesRead, markGroupNotificationsRead, messages.length]);
 
+  useLayoutEffect(() => {
+    const scrollToBottom = () => {
+      const list = messagesRef.current;
+      if (!list) return;
+      list.scrollTop = list.scrollHeight;
+    };
+
+    scrollToBottom();
+    const frame = window.requestAnimationFrame(scrollToBottom);
+    const timer = window.setTimeout(scrollToBottom, 120);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.clearTimeout(timer);
+    };
+  }, [messages.length, groupId]);
+
   if (!currentUser) return null;
   if (!group || !isMember) return <Navigate to="/groups" replace />;
 
@@ -147,11 +170,16 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
       return;
     }
     setMessage("");
+    window.requestAnimationFrame(() => {
+      composerRef.current?.focus();
+      const list = messagesRef.current;
+      if (list) list.scrollTop = list.scrollHeight;
+    });
   };
 
   return (
     <AppShell title="Groups">
-      <div className="mx-auto flex min-h-[calc(100dvh-8.5rem)] max-w-3xl flex-col px-4 py-4">
+      <div className="mx-auto flex h-[calc(100dvh-8.5rem)] max-w-3xl flex-col px-4 py-4">
         <header className="mb-4 flex items-center gap-3 rounded-lg border border-border bg-card p-3 shadow-soft">
           <Button asChild size="icon" variant="ghost" className="shrink-0">
             <Link to="/groups"><ArrowLeft className="size-4" /></Link>
@@ -166,7 +194,7 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
           </Button>
         </header>
 
-        <section className="flex-1 space-y-3 overflow-y-auto pb-4">
+        <section ref={messagesRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto pb-2">
           {messages.length === 0 ? (
             <div className="rounded-lg border border-dashed border-border bg-card p-8 text-center text-sm text-muted-foreground">
               No messages yet.
@@ -202,13 +230,24 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
 
         <form onSubmit={sendMessage} className="sticky bottom-20 flex items-end gap-2 rounded-lg border border-border bg-background p-2 shadow-soft sm:bottom-24">
           <Textarea
+            ref={composerRef}
             value={message}
             onChange={(event) => setMessage(event.target.value)}
             placeholder="Message"
             rows={1}
             className="max-h-32 min-h-11 resize-none bg-card py-2.5"
           />
-          <Button type="submit" size="icon" className="h-11 w-11 shrink-0">
+          <Button
+            type="submit"
+            size="icon"
+            className="h-11 w-11 shrink-0"
+            onMouseDown={(event) => event.preventDefault()}
+            onTouchStart={(event) => event.preventDefault()}
+            onTouchEnd={(event) => {
+              event.preventDefault();
+              event.currentTarget.form?.requestSubmit();
+            }}
+          >
             <Send className="size-4" />
           </Button>
         </form>
@@ -458,6 +497,15 @@ const ReceiptSection = ({ title, users, detail }: { title: string; users: User[]
     )}
   </section>
 );
+
+const UnreadBadge = ({ count }: { count: number }) => {
+  if (count <= 0) return null;
+  return (
+    <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-primary text-[10px] font-black text-primary-foreground shadow-sm">
+      {count > 9 ? "9+" : count}
+    </span>
+  );
+};
 
 const MemberPicker = ({
   users,
