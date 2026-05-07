@@ -4,12 +4,23 @@ const admin = require("firebase-admin");
 
 // ── Initialize Firebase Admin SDK ──────────────────────────────
 // Uses FIREBASE_SERVICE_ACCOUNT env var (JSON string of the service account key)
-const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT || "{}");
-admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount),
-});
-const db = admin.firestore();
-const messaging = admin.messaging();
+let db, messaging;
+try {
+  const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT || "{}");
+  if (Object.keys(serviceAccount).length > 0) {
+    admin.initializeApp({
+      credential: admin.credential.cert(serviceAccount),
+    });
+    db = admin.firestore();
+    messaging = admin.messaging();
+    console.log("Firebase Admin initialized successfully.");
+  } else {
+    console.warn("FIREBASE_SERVICE_ACCOUNT is empty. Notifications will fail.");
+  }
+} catch (err) {
+  console.error("Failed to parse FIREBASE_SERVICE_ACCOUNT JSON. Is it formatted correctly?");
+  console.error(err);
+}
 
 // ── Express Server ─────────────────────────────────────────────
 const app = express();
@@ -42,6 +53,10 @@ app.get("/", (_req, res) => {
  */
 app.post("/api/send-notification", authenticate, async (req, res) => {
   try {
+    if (!db || !messaging) {
+      return res.status(500).json({ error: "Firebase Admin is not configured. Check FIREBASE_SERVICE_ACCOUNT." });
+    }
+
     const { recipientId, title, body, type } = req.body;
 
     if (!recipientId || !title || !body) {
