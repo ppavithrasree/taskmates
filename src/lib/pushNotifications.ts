@@ -22,6 +22,13 @@ type PushModule = {
 };
 
 let pushModule: PushModule | null = null;
+let activePath = "/";
+let initializedUserId: string | null = null;
+let listenerHandles: { remove: () => void }[] = [];
+
+export const setActivePushPath = (pathname: string) => {
+  activePath = pathname;
+};
 
 const loadPush = async (): Promise<PushModule | null> => {
   if (pushModule) return pushModule;
@@ -44,10 +51,18 @@ export const initFCMPush = async (
 ): Promise<void> => {
   const mod = await loadPush();
   if (!mod) return;
+  if (initializedUserId === userId) return;
+
+  for (const handle of listenerHandles) {
+    handle.remove();
+  }
+  listenerHandles = [];
+  initializedUserId = userId;
 
   try {
     const perm = await mod.PushNotifications.requestPermissions();
     if (perm.receive !== "granted") {
+      initializedUserId = null;
       console.warn("FCM push permission denied");
       return;
     }
@@ -55,7 +70,7 @@ export const initFCMPush = async (
     await mod.PushNotifications.register();
 
     // Listen for FCM token
-    await mod.PushNotifications.addListener("registration", async (data: unknown) => {
+    listenerHandles.push(await mod.PushNotifications.addListener("registration", async (data: unknown) => {
       const token = (data as { value?: string })?.value;
       if (!token) return;
       console.log("FCM token:", token.slice(0, 20) + "...");
@@ -63,14 +78,26 @@ export const initFCMPush = async (
       // Store token in Firestore
       try {
         const { getApps } = await import("firebase/app");
-        const { getFirestore, doc, setDoc } = await import("firebase/firestore");
+        const { collection, doc, getDocs, getFirestore, query, setDoc, where, writeBatch } = await import("firebase/firestore");
         const fbApp = getApps()[0];
         if (!fbApp) return;
         const db = getFirestore(fbApp);
-        const tokenDocId = `${userId}_${token.slice(-12)}`;
+        const installationId = localStorage.getItem("taskmates_installation_id") ?? crypto.randomUUID();
+        localStorage.setItem("taskmates_installation_id", installationId);
+        const tokenDocId = `${userId}_${installationId}`;
+        const existingTokens = await getDocs(query(collection(db, "fcmTokens"), where("userId", "==", userId)));
+        const batch = writeBatch(db);
+        existingTokens.docs.forEach((item) => {
+          const data = item.data();
+          if (item.id !== tokenDocId && (data.installationId === installationId || data.token === token)) {
+            batch.delete(item.ref);
+          }
+        });
+        await batch.commit();
         await setDoc(doc(db, "fcmTokens", tokenDocId), {
           userId,
           token,
+          installationId,
           updatedAt: Date.now(),
           platform: "android",
         });
@@ -78,26 +105,28 @@ export const initFCMPush = async (
       } catch (err) {
         console.error("Failed to store FCM token:", err);
       }
-    });
+    }));
 
     // Registration error
-    await mod.PushNotifications.addListener("registrationError", (err: unknown) => {
+    listenerHandles.push(await mod.PushNotifications.addListener("registrationError", (err: unknown) => {
       console.error("FCM registration error:", err);
-    });
+    }));
 
     // Push received while app is in foreground
-    await mod.PushNotifications.addListener("pushNotificationReceived", (notif: unknown) => {
-      const n = notif as { title?: string; body?: string };
+    listenerHandles.push(await mod.PushNotifications.addListener("pushNotificationReceived", (notif: unknown) => {
+      const n = notif as { title?: string; body?: string; data?: { type?: string; link?: string } };
+      if (n.data?.type === "group_message" && n.data.link === activePath) return;
       if (n.title && n.body && onForegroundPush) {
         onForegroundPush(n.title, n.body);
       }
-    });
+    }));
 
     // Push tapped (app was in background/closed)
-    await mod.PushNotifications.addListener("pushNotificationActionPerformed", () => {
+    listenerHandles.push(await mod.PushNotifications.addListener("pushNotificationActionPerformed", () => {
       // App opens naturally — the notification page handles it
-    });
+    }));
   } catch (err) {
+    initializedUserId = null;
     console.error("FCM init error:", err);
   }
 };
@@ -110,7 +139,8 @@ export const sendFCMPush = async (
   recipientId: string,
   title: string,
   body: string,
-  type: string
+  type: string,
+  link?: string
 ): Promise<void> => {
   if (!FCM_SERVER_URL) {
     console.warn("FCM_SERVER_URL not configured — push notification not sent");
@@ -124,7 +154,7 @@ export const sendFCMPush = async (
     const resp = await fetch(`${FCM_SERVER_URL}/api/send-notification`, {
       method: "POST",
       headers,
-      body: JSON.stringify({ recipientId, title, body, type }),
+      body: JSON.stringify({ recipientId, title, body, type, link }),
     });
 
     if (!resp.ok) {

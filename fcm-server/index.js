@@ -50,7 +50,7 @@ app.get("/", (_req, res) => {
 
 /**
  * POST /api/send-notification
- * Body: { recipientId, title, body, type }
+ * Body: { recipientId, title, body, type, link }
  *
  * Looks up the recipient's FCM tokens from Firestore and sends
  * a high-priority push notification via FCM.
@@ -61,7 +61,7 @@ app.post("/api/send-notification", authenticate, async (req, res) => {
       return res.status(500).json({ error: "Firebase Admin is not configured. Check FIREBASE_SERVICE_ACCOUNT." });
     }
 
-    const { recipientId, title, body, type } = req.body;
+    const { recipientId, title, body, type, link } = req.body;
 
     if (!recipientId || !title || !body) {
       return res.status(400).json({ error: "Missing recipientId, title, or body" });
@@ -77,7 +77,18 @@ app.post("/api/send-notification", authenticate, async (req, res) => {
       return res.json({ sent: 0, message: "No FCM tokens found for recipient" });
     }
 
-    const tokens = tokensSnapshot.docs.map((doc) => doc.data().token);
+    const latestByDevice = new Map();
+    for (const doc of tokensSnapshot.docs) {
+      const data = doc.data();
+      if (!data.token) continue;
+      const deviceKey = data.installationId || data.platform || doc.id;
+      const existing = latestByDevice.get(deviceKey);
+      if (!existing || (data.updatedAt || 0) > (existing.data.updatedAt || 0)) {
+        latestByDevice.set(deviceKey, { doc, data });
+      }
+    }
+    const tokenEntries = [...latestByDevice.values()];
+    const tokens = [...new Set(tokenEntries.map((entry) => entry.data.token))];
 
     // Send FCM push to all device tokens
     const results = await Promise.allSettled(
@@ -86,7 +97,10 @@ app.post("/api/send-notification", authenticate, async (req, res) => {
           .send({
             token,
             notification: { title, body },
-            data: { type: type || "general" },
+            data: {
+              type: type || "general",
+              link: link || "",
+            },
             android: {
               priority: "high",
               notification: {

@@ -98,15 +98,13 @@ export const showLocalNotification = async (title: string, body: string, id?: nu
   }
 };
 
-/** Schedule a daily midnight notification for unlogged gaps. Works even when app is closed. */
-export const scheduleDailyMidnightNotification = async (enabled: boolean, gapList?: string) => {
-  const body = gapList
-    ? `You have unlogged activity gaps: ${gapList}. Open the app to fill them in!`
-    : "You have unlogged activity gaps today. Open the app to fill them in!";
+/** Schedule the next midnight notification for unlogged gaps. */
+export const scheduleDailyMidnightNotification = async (enabled: boolean, body?: string) => {
+  const message = body ?? "There are some time slots that you have not kept logs for.";
 
   if (Capacitor.isNativePlatform()) {
     await ensureChannel();
-    // Cancel any existing scheduled midnight notification
+    // Replace the previous one-shot reminder with the latest gap summary.
     await LocalNotifications.cancel({ notifications: [{ id: NOTIFICATION_BASE_ID }] }).catch(() => undefined);
 
     if (!enabled) return;
@@ -121,15 +119,14 @@ export const scheduleDailyMidnightNotification = async (enabled: boolean, gapLis
     await LocalNotifications.schedule({
       notifications: [
         {
-          title: "TaskMates — Activity Gaps",
-          body,
+          title: "Unlogged Activity Gaps",
+          body: message,
           id: NOTIFICATION_BASE_ID,
           channelId: CHANNEL_ID,
           smallIcon: "ic_stat_icon_config_sample",
           iconColor: "#0f9aa2",
           schedule: {
             at: next,
-            every: "day",
             allowWhileIdle: true,
           },
         },
@@ -150,7 +147,7 @@ export const scheduleDailyMidnightNotification = async (enabled: boolean, gapLis
   if (delay > 0 && delay < 86_400_000) {
     setTimeout(() => {
       if ("Notification" in window && Notification.permission === "granted") {
-        new Notification("TaskMates", { body });
+        new Notification("Unlogged Activity Gaps", { body: message });
       }
     }, delay);
   }

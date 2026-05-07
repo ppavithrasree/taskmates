@@ -1,10 +1,13 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
 import { BrowserRouter, Route, Routes, useLocation, useNavigate } from "react-router-dom";
+import { Capacitor } from "@capacitor/core";
+import { toast } from "sonner";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AppProvider } from "@/context/AppContext";
+import { setActivePushPath } from "@/lib/pushNotifications";
 import Index from "./pages/Index.tsx";
 import AuthPage from "./pages/AuthPage.tsx";
 import Dashboard from "./pages/Dashboard.tsx";
@@ -36,9 +39,11 @@ const BackRouteController = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const pathRef = useRef(location.pathname);
+  const lastExitPromptRef = useRef(0);
 
   useEffect(() => {
     pathRef.current = location.pathname;
+    setActivePushPath(location.pathname);
   }, [location.pathname]);
 
   useEffect(() => {
@@ -53,6 +58,46 @@ const BackRouteController = () => {
 
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
+  }, [navigate]);
+
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+    let remove: (() => void) | undefined;
+
+    import("@capacitor/app").then(({ App }) => {
+      App.addListener("backButton", ({ canGoBack }) => {
+        if (document.querySelector('[role="dialog"]')) return;
+
+        const pathname = pathRef.current;
+        const target = backTargetFor(pathname);
+        if (target) {
+          navigate(target, { replace: true });
+          return;
+        }
+
+        if (pathname === "/dashboard" || pathname === "/") {
+          const now = Date.now();
+          if (now - lastExitPromptRef.current < 2000) {
+            App.exitApp();
+            return;
+          }
+          lastExitPromptRef.current = now;
+          toast("Do again to exit.");
+          return;
+        }
+
+        if (canGoBack) {
+          window.history.back();
+          return;
+        }
+
+        navigate("/dashboard", { replace: true });
+      }).then((handle) => {
+        remove = () => handle.remove();
+      });
+    });
+
+    return () => remove?.();
   }, [navigate]);
 
   return null;

@@ -106,6 +106,11 @@ export const minutesToLabel = (minute: number) => {
 
 export const gapLabel = (gap: TimeGap) => `${minutesToLabel(gap.start)}-${minutesToLabel(gap.end)}`;
 
+export const unloggedGapsBody = (gaps: TimeGap[]) => {
+  if (gaps.length === 1) return `You have not kept logs for ${gapLabel(gaps[0])}.`;
+  return "There are some time slots that you have not kept logs for.";
+};
+
 export const isValidPostRange = (startTime: number, endTime: number) =>
   Number.isFinite(startTime) &&
   Number.isFinite(endTime) &&

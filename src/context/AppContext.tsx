@@ -13,7 +13,7 @@ import {
   usernameToEmail,
   checkFirebasePostsExist,
 } from "@/lib/firebaseSync";
-import { analyzeDayCoverage, isValidPostRange, postsInLocalDay, startOfLocalDay, gapLabel } from "@/lib/timeCoverage";
+import { analyzeDayCoverage, dateKey, isValidPostRange, postsInLocalDay, startOfLocalDay, unloggedGapsBody } from "@/lib/timeCoverage";
 import { requestNotificationPermission, scheduleDailyMidnightNotification, showLocalNotification } from "@/lib/notifications";
 import { initFCMPush, sendFCMPush } from "@/lib/pushNotifications";
 
@@ -239,6 +239,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   const [state, setState] = useState<AppState>(() => load());
   const [currentUserId, setCurrentUserId] = useState<string | null>(() => localStorage.getItem(SESSION_KEY));
   const [online, setOnline] = useState(() => navigator.onLine);
+  const [midnightTick, setMidnightTick] = useState(0);
 
   useEffect(() => localStorage.setItem(LS_KEY, JSON.stringify(state)), [state]);
   useEffect(() => {
@@ -519,52 +520,54 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       commitOperation(queueFor("notifications", "upsert", notif.id, notif));
       
       // Trigger free FCM push notification to the recipient
-      void sendFCMPush(recipientId, title, body, type);
+      void sendFCMPush(recipientId, title, body, type, link);
     },
     [currentUser, commitOperation]
   );
 
-  // Schedule daily midnight notification for coverage gaps
+  // Schedule the next midnight check for the previous day's coverage gaps.
   useEffect(() => {
     if (!currentUser) return;
     const todayStart = startOfLocalDay(Date.now());
     const todayPosts = postsInLocalDay(state.posts, currentUser.id, todayStart);
     const coverage = analyzeDayCoverage(todayPosts, todayStart);
-    const gapList = coverage.gaps.length > 0 ? coverage.gaps.map(gapLabel).join(", ") : undefined;
-    scheduleDailyMidnightNotification(!coverage.isComplete, gapList);
+    const body = coverage.isComplete ? undefined : unloggedGapsBody(coverage.gaps);
+    scheduleDailyMidnightNotification(!coverage.isComplete, body);
 
-    // Also create a Firebase notification at midnight for gaps
+    // Also create one in-app/Firebase notification at midnight for yesterday's gaps.
     const scheduleMidnightCheck = () => {
       const next = new Date();
       next.setDate(next.getDate() + 1);
       next.setHours(0, 0, 0, 0);
       return window.setTimeout(() => {
-        const dayStart = startOfLocalDay(Date.now());
+        const dayStart = startOfLocalDay(Date.now()) - 86_400_000;
         const dayPosts = postsInLocalDay(state.posts, currentUser.id, dayStart);
         const dayCoverage = analyzeDayCoverage(dayPosts, dayStart);
         if (!dayCoverage.isComplete) {
-          const gaps = dayCoverage.gaps.map(gapLabel).join(", ");
-          // Create a self-notification stored in Firebase
+          const notificationId = `unlogged_${currentUser.id}_${dateKey(dayStart)}`;
           const now = Date.now();
           const notif: AppNotification = {
-            id: uid("notif"),
+            id: notificationId,
             recipientId: currentUser.id,
             type: "unlogged_gaps",
             title: "Unlogged Activity Gaps",
-            body: `You forgot to log: ${gaps}`,
+            body: unloggedGapsBody(dayCoverage.gaps),
             link: "/dashboard",
             read: false,
             createdAt: now,
             updatedAt: now,
           };
-          setState((s) => ({ ...s, notifications: [...s.notifications, notif] }));
+          setState((s) => s.notifications.some((item) => item.id === notificationId)
+            ? s
+            : { ...s, notifications: [...s.notifications, notif] });
           commitOperation(queueFor("notifications", "upsert", notif.id, notif));
         }
+        setMidnightTick((value) => value + 1);
       }, Math.max(1000, next.getTime() - Date.now()));
     };
     const timer = scheduleMidnightCheck();
     return () => window.clearTimeout(timer);
-  }, [currentUser, state.posts, commitOperation]);
+  }, [currentUser, state.posts, commitOperation, midnightTick]);
 
   const register: AppContextValue["register"] = async (username, password, confirmPassword) => {
     const clean = username.trim().toLowerCase();
@@ -1037,11 +1040,13 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     commitOperation(operation);
   };
 
-  const markNotificationsRead: AppContextValue["markNotificationsRead"] = () => {
+  const markNotificationsRead: AppContextValue["markNotificationsRead"] = useCallback(() => {
     if (!currentUser) return;
     const changedNotifications = state.notifications
       .filter((notification) => notification.recipientId === currentUser.id && !notification.read)
       .map((notification) => ({ ...notification, read: true, updatedAt: Date.now() }));
+    if (changedNotifications.length === 0) return;
+
     const changedById = new Map(changedNotifications.map((notification) => [notification.id, notification]));
 
     setState((snapshot) => ({
@@ -1052,7 +1057,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     for (const notification of changedNotifications) {
       commitOperation(queueFor("notifications", "upsert", notification.id, notification));
     }
-  };
+  }, [currentUser, state.notifications, commitOperation]);
 
   /** Feed posts visible to current user — derived from connections collection */
   const visibleFeedPosts = useMemo(() => {
