@@ -329,8 +329,8 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     // Show a local notification for each new one (skip on initial load by checking if we've initialized)
     if (seenNotifIdsRef.current.size > 0 && newNotifs.length > 0) {
       for (const notif of newNotifs) {
-        // Only show if it's recent (within last 30 seconds) to avoid showing old notifications on reload
-        if (Date.now() - notif.createdAt < 30_000) {
+        // Only show if it's recent (within last 5 minutes) to avoid showing old notifications on reload
+        if (Date.now() - notif.createdAt < 300_000) {
           void showLocalNotification(notif.title, notif.body);
         }
       }
@@ -340,18 +340,19 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     seenNotifIdsRef.current = new Set(myNotifs.map((n) => n.id));
   }, [state.notifications, currentUser]);
 
-  // Initialize FCM push notifications (for when app is closed/background)
+  // Request notification permission on first login (with delay for Android to be ready)
   useEffect(() => {
     if (!currentUser) return;
-    let cancelled = false;
-    import("@/lib/pushNotifications").then(({ initPushNotifications }) => {
-      if (cancelled) return;
-      void initPushNotifications(currentUser.id, (title, body) => {
-        // When a push is received while app is in foreground, show local notification
-        void showLocalNotification(title, body);
+    const timer = window.setTimeout(() => {
+      requestNotificationPermission().then((granted) => {
+        if (granted) {
+          console.log("Notification permission granted");
+        } else {
+          console.warn("Notification permission denied");
+        }
       });
-    }).catch(() => undefined);
-    return () => { cancelled = true; };
+    }, 1500); // 1.5s delay to ensure Android WebView is fully loaded
+    return () => window.clearTimeout(timer);
   }, [currentUser]);
 
   // Clean up old notifications (>10 days) from Firebase

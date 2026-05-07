@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "126631740046",
+    "project_id": "written-blogs",
+    "storage_bucket": "written-blogs.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:126631740046:android:6f87e455773ff45c833fdf",
+        "android_client_info": {
+          "package_name": "app.taskmates.daily"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBRsF4-4bZiguV9TkOH76xRkj4gTn8lFL0"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
