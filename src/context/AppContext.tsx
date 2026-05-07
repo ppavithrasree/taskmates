@@ -1,6 +1,6 @@
 import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import type { AppNotification, AppState, AuthResult, Connection, Group, GroupMessage, Post, SyncCollection, User, Visibility } from "@/types";
+import type { AppNotification, AppState, AuthResult, Connection, Group, GroupMessage, Post, SyncCollection, SyncOperation, User, Visibility } from "@/types";
 import {
   firebaseChangePassword,
   firebaseCreateAccount,
@@ -44,10 +44,13 @@ interface AppContextValue {
   getAcceptedConnectionIds: (userId: string) => string[];
   getConnectionStatus: (otherId: string) => "self" | "connected" | "incoming" | "outgoing" | "none";
   createGroup: (input: { name: string; memberIds: string[] }) => AuthResult;
+  updateGroupName: (groupId: string, name: string) => AuthResult;
   addGroupMembers: (groupId: string, memberIds: string[]) => AuthResult;
   removeGroupMember: (groupId: string, memberId: string) => AuthResult;
   exitGroup: (groupId: string) => AuthResult;
   addGroupMessage: (groupId: string, content: string) => AuthResult;
+  markGroupMessagesRead: (groupId: string) => void;
+  markGroupNotificationsRead: (groupId: string) => void;
   toggleMuteGroup: (groupId: string) => void;
   isGroupMuted: (groupId: string) => boolean;
   addPost: (input: { startTime: number; endTime: number; content: string; visibility?: Visibility; customUsernames?: string[] }) => AuthResult;
@@ -147,6 +150,27 @@ const queueFor = (collection: SyncCollection, type: "upsert" | "delete", entityI
   updatedAt: Date.now(),
 });
 
+const clearDirtyItems = <T extends { id: string; dirty?: boolean }>(items: T[], ids: Set<string>) =>
+  ids.size ? items.map((item) => ids.has(item.id) ? { ...item, dirty: false } : item) : items;
+
+const clearSyncedDirtyFlags = (snapshot: AppState, operations: SyncOperation[]): AppState => {
+  const upserts = operations.filter((operation) => operation.type === "upsert");
+  if (upserts.length === 0) return snapshot;
+
+  const idsFor = (collection: SyncCollection) =>
+    new Set(upserts.filter((operation) => operation.collection === collection).map((operation) => operation.entityId));
+
+  return {
+    ...snapshot,
+    users: clearDirtyItems(snapshot.users, idsFor("users")),
+    posts: clearDirtyItems(snapshot.posts, idsFor("posts")),
+    connections: clearDirtyItems(snapshot.connections, idsFor("connections")),
+    groups: clearDirtyItems(snapshot.groups, idsFor("groups")),
+    groupMessages: clearDirtyItems(snapshot.groupMessages, idsFor("groupMessages")),
+    notifications: clearDirtyItems(snapshot.notifications, idsFor("notifications")),
+  };
+};
+
 /** Derive accepted connection user IDs from the connections collection */
 const deriveAcceptedIds = (connections: Connection[], userId: string): string[] => {
   const ids: string[] = [];
@@ -174,6 +198,38 @@ const mergeByFreshness = <T extends { id: string; updatedAt: number; dirty?: boo
     if (!existing || (!existing.dirty && item.updatedAt >= existing.updatedAt)) {
       map.set(item.id, { ...item, dirty: false });
     }
+  }
+  return [...map.values()];
+};
+
+const mergeIds = (a?: string[], b?: string[]) => [...new Set([...(a ?? []), ...(b ?? [])])];
+
+const mergeGroupMessages = (local: GroupMessage[], remote: GroupMessage[]) => {
+  const map = new Map(local.map((item) => [item.id, item]));
+  for (const item of remote) {
+    const existing = map.get(item.id);
+    if (!existing) {
+      map.set(item.id, { ...item, dirty: false });
+      continue;
+    }
+    if (!existing.dirty && item.updatedAt >= existing.updatedAt) {
+      map.set(item.id, { ...item, dirty: false });
+      continue;
+    }
+
+    const sameMessageBody =
+      existing.groupId === item.groupId &&
+      existing.senderId === item.senderId &&
+      existing.content === item.content &&
+      existing.createdAt === item.createdAt;
+
+    map.set(item.id, {
+      ...existing,
+      deliveredTo: mergeIds(existing.deliveredTo, item.deliveredTo),
+      readBy: mergeIds(existing.readBy, item.readBy),
+      updatedAt: Math.max(existing.updatedAt, item.updatedAt),
+      dirty: sameMessageBody ? false : existing.dirty,
+    });
   }
   return [...map.values()];
 };
@@ -206,7 +262,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         const pushed = await pushSyncOperation(operation);
         if (pushed) {
           setState((snapshot) => ({
-            ...snapshot,
+            ...clearSyncedDirtyFlags(snapshot, [operation]),
             syncQueue: snapshot.syncQueue.filter((item) => item.id !== operation.id),
           }));
         }
@@ -252,15 +308,11 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       if (!cancelled && completed.length) {
         setState((snapshot) => {
           const completedSet = new Set(completed);
-          const syncedPostIds = new Set(
-            snapshot.syncQueue
-              .filter((op) => completedSet.has(op.id) && op.collection === "posts" && op.type === "upsert")
-              .map((op) => op.entityId)
-          );
+          const completedOperations = snapshot.syncQueue.filter((op) => completedSet.has(op.id));
+          const cleanedSnapshot = clearSyncedDirtyFlags(snapshot, completedOperations);
           return {
-            ...snapshot,
-            posts: snapshot.posts.map((post) => (syncedPostIds.has(post.id) ? { ...post, dirty: false } : post)),
-            syncQueue: snapshot.syncQueue.filter((op) => !completedSet.has(op.id)),
+            ...cleanedSnapshot,
+            syncQueue: cleanedSnapshot.syncQueue.filter((op) => !completedSet.has(op.id)),
           };
         });
       }
@@ -311,12 +363,36 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
           posts: nextPosts,
           connections: nextConnections,
           groups: remote.groups ? mergeByFreshness(snapshot.groups, remote.groups) : snapshot.groups,
-          groupMessages: remote.groupMessages ? mergeByFreshness(snapshot.groupMessages, remote.groupMessages) : snapshot.groupMessages,
+          groupMessages: remote.groupMessages ? mergeGroupMessages(snapshot.groupMessages, remote.groupMessages) : snapshot.groupMessages,
           notifications: nextNotifications,
         };
       });
     });
   }, [currentUserId]);
+
+  useEffect(() => {
+    if (!currentUser) return;
+    const now = Date.now();
+    const changedMessages: GroupMessage[] = state.groupMessages.flatMap((message) => {
+      if (message.senderId === currentUser.id) return [];
+      const group = state.groups.find((item) => item.id === message.groupId);
+      if (!group?.memberIds.includes(currentUser.id)) return [];
+      const deliveredTo = message.deliveredTo ?? [message.senderId];
+      if (deliveredTo.includes(currentUser.id)) return [];
+      return [{ ...message, deliveredTo: [...deliveredTo, currentUser.id], updatedAt: now, dirty: true }];
+    });
+
+    if (changedMessages.length === 0) return;
+    const changedById = new Map(changedMessages.map((message) => [message.id, message]));
+    setState((snapshot) => ({
+      ...snapshot,
+      groupMessages: snapshot.groupMessages.map((message) => changedById.get(message.id) ?? message),
+    }));
+
+    for (const message of changedMessages) {
+      commitOperation(queueFor("groupMessages", "upsert", message.id, message));
+    }
+  }, [currentUser, state.groupMessages, state.groups, commitOperation]);
 
   // Request notification permission and initialize FCM push on first login
   useEffect(() => {
@@ -730,6 +806,23 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     return { ok: true };
   };
 
+  const updateGroupName: AppContextValue["updateGroupName"] = (groupId, name) => {
+    if (!currentUser) return { ok: false, error: "Sign in first." };
+    const group = state.groups.find((item) => item.id === groupId);
+    if (!group || !group.memberIds.includes(currentUser.id)) return { ok: false, error: "Group not found." };
+    const clean = name.trim();
+    if (clean.length < 2) return { ok: false, error: "Add a group name." };
+    if (clean === group.name) return { ok: false, error: "Use a different group name." };
+
+    const updated = { ...group, name: clean, updatedAt: Date.now(), dirty: true };
+    setState((snapshot) => ({
+      ...snapshot,
+      groups: snapshot.groups.map((item) => item.id === groupId ? updated : item),
+    }));
+    commitOperation(queueFor("groups", "upsert", updated.id, updated));
+    return { ok: true };
+  };
+
   const removeGroupMember: AppContextValue["removeGroupMember"] = (groupId, memberId) => {
     if (!currentUser) return { ok: false, error: "Sign in first." };
     const group = state.groups.find((item) => item.id === groupId);
@@ -763,6 +856,8 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       groupId,
       senderId: currentUser.id,
       content: clean,
+      deliveredTo: [currentUser.id],
+      readBy: [currentUser.id],
       createdAt: now,
       updatedAt: now,
       dirty: true,
@@ -792,6 +887,59 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       }
     }
     return { ok: true };
+  };
+
+  const markGroupMessagesRead: AppContextValue["markGroupMessagesRead"] = (groupId) => {
+    if (!currentUser) return;
+    const group = state.groups.find((item) => item.id === groupId);
+    if (!group?.memberIds.includes(currentUser.id)) return;
+
+    const changedMessages: GroupMessage[] = state.groupMessages.flatMap((message) => {
+      if (message.groupId !== groupId || message.senderId === currentUser.id) return [];
+      const deliveredTo = message.deliveredTo ?? [message.senderId];
+      const readBy = message.readBy ?? [message.senderId];
+      const nextDeliveredTo = deliveredTo.includes(currentUser.id) ? deliveredTo : [...deliveredTo, currentUser.id];
+      const nextReadBy = readBy.includes(currentUser.id) ? readBy : [...readBy, currentUser.id];
+      if (nextDeliveredTo === deliveredTo && nextReadBy === readBy) return [];
+      return [{ ...message, deliveredTo: nextDeliveredTo, readBy: nextReadBy, updatedAt: Date.now(), dirty: true }];
+    });
+
+    if (changedMessages.length === 0) return;
+    const changedById = new Map(changedMessages.map((message) => [message.id, message]));
+    setState((snapshot) => ({
+      ...snapshot,
+      groupMessages: snapshot.groupMessages.map((message) => changedById.get(message.id) ?? message),
+    }));
+
+    for (const message of changedMessages) {
+      commitOperation(queueFor("groupMessages", "upsert", message.id, message));
+    }
+  };
+
+  const markGroupNotificationsRead: AppContextValue["markGroupNotificationsRead"] = (groupId) => {
+    if (!currentUser) return;
+    const changedNotifications = state.notifications.flatMap((notification) => {
+      if (
+        notification.recipientId !== currentUser.id ||
+        notification.type !== "group_message" ||
+        notification.link !== `/groups/${groupId}` ||
+        notification.read
+      ) {
+        return [];
+      }
+      return [{ ...notification, read: true, updatedAt: Date.now() }];
+    });
+
+    if (changedNotifications.length === 0) return;
+    const changedById = new Map(changedNotifications.map((notification) => [notification.id, notification]));
+    setState((snapshot) => ({
+      ...snapshot,
+      notifications: snapshot.notifications.map((notification) => changedById.get(notification.id) ?? notification),
+    }));
+
+    for (const notification of changedNotifications) {
+      commitOperation(queueFor("notifications", "upsert", notification.id, notification));
+    }
   };
 
   const toggleMuteGroup: AppContextValue["toggleMuteGroup"] = (groupId) => {
@@ -871,10 +1019,20 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const markNotificationsRead: AppContextValue["markNotificationsRead"] = () => {
+    if (!currentUser) return;
+    const changedNotifications = state.notifications
+      .filter((notification) => notification.recipientId === currentUser.id && !notification.read)
+      .map((notification) => ({ ...notification, read: true, updatedAt: Date.now() }));
+    const changedById = new Map(changedNotifications.map((notification) => [notification.id, notification]));
+
     setState((snapshot) => ({
       ...snapshot,
+      notifications: snapshot.notifications.map((notification) => changedById.get(notification.id) ?? notification),
       settings: { ...snapshot.settings, notificationLastSeen: Date.now() },
     }));
+    for (const notification of changedNotifications) {
+      commitOperation(queueFor("notifications", "upsert", notification.id, notification));
+    }
   };
 
   /** Feed posts visible to current user — derived from connections collection */
@@ -901,9 +1059,8 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   }, [currentUser, state.notifications]);
 
   const unreadNotificationCount = useMemo(() => {
-    const lastSeen = state.settings.notificationLastSeen ?? 0;
-    return myNotifications.filter((n) => n.createdAt > lastSeen).length;
-  }, [myNotifications, state.settings.notificationLastSeen]);
+    return myNotifications.filter((n) => !n.read).length;
+  }, [myNotifications]);
 
   const pendingRequestCount = useMemo(() => {
     if (!currentUser) return 0;
@@ -912,8 +1069,8 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
 
   const unreadGroupCount = useMemo(() => {
     if (!currentUser) return 0;
-    return myNotifications.filter((n) => n.type === "group_message" && n.createdAt > (state.settings.notificationLastSeen ?? 0)).length;
-  }, [currentUser, myNotifications, state.settings.notificationLastSeen]);
+    return myNotifications.filter((n) => n.type === "group_message" && !n.read).length;
+  }, [currentUser, myNotifications]);
 
   const value: AppContextValue = {
     currentUser,
@@ -937,10 +1094,13 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     getAcceptedConnectionIds,
     getConnectionStatus,
     createGroup,
+    updateGroupName,
     addGroupMembers,
     removeGroupMember,
     exitGroup,
     addGroupMessage,
+    markGroupMessagesRead,
+    markGroupNotificationsRead,
     toggleMuteGroup,
     isGroupMuted,
     addPost,

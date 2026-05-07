@@ -1,8 +1,10 @@
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Moon, Shield, Sun, Trash2 } from "lucide-react";
 import { AppShell } from "@/components/layout/AppShell";
 import { useApp } from "@/context/AppContext";
 import type { Visibility } from "@/types";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -10,7 +12,39 @@ import { Slider } from "@/components/ui/slider";
 
 const Settings = () => {
   const { currentUser, settings, updateTheme, updateUserSettings, runRetentionCleanup } = useApp();
+  const [draftRetentionDays, setDraftRetentionDays] = useState(currentUser?.retentionDays ?? 15);
+  const [confirmRetentionOpen, setConfirmRetentionOpen] = useState(false);
+  const savedRetentionDays = currentUser?.retentionDays ?? 15;
+
+  useEffect(() => {
+    if (confirmRetentionOpen) return;
+    setDraftRetentionDays(savedRetentionDays);
+  }, [savedRetentionDays, confirmRetentionOpen]);
+
   if (!currentUser) return null;
+
+  const saveRetentionDays = () => {
+    if (draftRetentionDays === currentUser.retentionDays) {
+      toast.info("Auto-delete period is already saved.");
+      return;
+    }
+    if (draftRetentionDays < currentUser.retentionDays) {
+      setConfirmRetentionOpen(true);
+      return;
+    }
+    applyRetentionDays();
+  };
+
+  const applyRetentionDays = () => {
+    updateUserSettings({ retentionDays: draftRetentionDays });
+    runRetentionCleanup();
+    toast.success("Auto-delete period saved.");
+    setConfirmRetentionOpen(false);
+  };
+
+  const discardRetentionDraft = () => {
+    setDraftRetentionDays(currentUser.retentionDays);
+  };
 
   return (
     <AppShell title="Settings">
@@ -58,15 +92,46 @@ const Settings = () => {
         </section>
 
         <section className="space-y-4 rounded-lg border border-border bg-card p-4 shadow-soft">
-          <h2 className="flex items-center gap-2 font-black"><Trash2 className="size-4 text-primary" /> Retention</h2>
+          <h2 className="flex items-center gap-2 font-black"><Trash2 className="size-4 text-primary" /> Auto-Delete Period</h2>
           <div className="flex items-center justify-between text-sm">
             <span>Auto-delete after</span>
             <span className="font-black">{currentUser.retentionDays} days</span>
           </div>
-          <Slider min={1} max={60} step={1} value={[currentUser.retentionDays]} onValueChange={([retentionDays]) => updateUserSettings({ retentionDays })} />
-          <Button variant="outline" onClick={() => { runRetentionCleanup(); toast.success("Retention cleanup checked locally."); }}>Run cleanup now</Button>
+          <div className="space-y-2">
+            <Slider min={1} max={60} step={1} value={[draftRetentionDays]} onValueChange={([retentionDays]) => setDraftRetentionDays(retentionDays)} />
+            <div className="flex items-center justify-between text-xs text-muted-foreground">
+              <span>Selected</span>
+              <span className="font-bold">{draftRetentionDays} days</span>
+            </div>
+          </div>
+          <div className="flex justify-end gap-2">
+            {draftRetentionDays !== currentUser.retentionDays && (
+              <Button variant="ghost" onClick={discardRetentionDraft}>Cancel</Button>
+            )}
+            <Button variant="outline" onClick={saveRetentionDays}>Save</Button>
+          </div>
         </section>
       </div>
+
+      <AlertDialog open={confirmRetentionOpen} onOpenChange={setConfirmRetentionOpen}>
+        <AlertDialogContent className="rounded-lg">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Change auto-delete period?</AlertDialogTitle>
+            <AlertDialogDescription>
+              You are reducing the period from {currentUser.retentionDays} days to {draftRetentionDays} days. Older activity logs may be deleted after saving.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={discardRetentionDraft}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground"
+              onClick={applyRetentionDays}
+            >
+              Yes, save changes
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </AppShell>
   );
 };

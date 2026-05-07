@@ -56,6 +56,8 @@ export interface GroupMessage {
   groupId: string;
   senderId: string;
   content: string;
+  deliveredTo?: string[];
+  readBy?: string[];
   createdAt: number;
   updatedAt: number;
   dirty?: boolean;

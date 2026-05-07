@@ -31,6 +31,7 @@ const App = () => (
             <Route path="/friends" element={<Friends />} />
             <Route path="/groups" element={<Groups />} />
             <Route path="/groups/:groupId" element={<Groups />} />
+            <Route path="/groups/:groupId/:mode" element={<Groups />} />
             <Route path="/profile" element={<Profile />} />
             <Route path="/profile/:username" element={<Profile />} />
             <Route path="/settings" element={<Settings />} />

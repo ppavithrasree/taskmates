@@ -1,0 +1,457 @@
+diff --git a/src/pages/Groups.tsx b/src/pages/Groups.tsx
+index 6586aa9..8292dc7 100644
+--- a/src/pages/Groups.tsx
++++ b/src/pages/Groups.tsx
+@@ -1,6 +1,6 @@
+-import { FormEvent, ReactNode, useMemo, useState } from "react";
++import { FormEvent, ReactNode, useEffect, useMemo, useState } from "react";
+ import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
+-import { ArrowLeft, Bell, BellOff, Check, Info, LogOut, Plus, Send, Trash2, UserPlus, UsersRound } from "lucide-react";
++import { ArrowLeft, Bell, BellOff, Check, CheckCheck, Info, LogOut, Pencil, Plus, Send, Trash2, UserPlus, UsersRound } from "lucide-react";
+ import { toast } from "sonner";
+ import { AppShell } from "@/components/layout/AppShell";
+ import { useApp } from "@/context/AppContext";
+@@ -11,8 +11,9 @@ import { Input } from "@/components/ui/input";
+ import type { User } from "@/types";
+ 
+ const Groups = () => {
+-  const { groupId } = useParams();
+-  return groupId ? <GroupChat groupId={groupId} /> : <GroupsList />;
++  const { groupId, mode } = useParams();
++  if (!groupId) return <GroupsList />;
++  return mode === "info" ? <GroupInfo groupId={groupId} /> : <GroupChat groupId={groupId} />;
+ };
+ 
+ const GroupsList = () => {
+@@ -110,19 +111,12 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
+     users,
+     groups,
+     groupMessages,
+-    getAcceptedConnectionIds,
+     addGroupMessage,
+-    addGroupMembers,
+-    removeGroupMember,
+-    exitGroup,
+-    toggleMuteGroup,
+-    isGroupMuted,
++    markGroupMessagesRead,
++    markGroupNotificationsRead,
+   } = useApp();
+-  const navigate = useNavigate();
+   const [message, setMessage] = useState("");
+-  const [infoOpen, setInfoOpen] = useState(false);
+-  const [addOpen, setAddOpen] = useState(false);
+-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
++  const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
+ 
+   const group = groups.find((item) => item.id === groupId);
+   const isMember = Boolean(currentUser && group?.memberIds.includes(currentUser.id));
+@@ -132,12 +126,17 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
+     [groupMessages, groupId]
+   );
+ 
++  useEffect(() => {
++    if (!group || !isMember) return;
++    markGroupMessagesRead(group.id);
++    markGroupNotificationsRead(group.id);
++  }, [group, isMember, messages.length, markGroupMessagesRead, markGroupNotificationsRead]);
++
+   if (!currentUser) return null;
+   if (!group || !isMember) return <Navigate to="/groups" replace />;
+ 
+   const members = group.memberIds.map((id) => users.find((user) => user.id === id)).filter(Boolean) as User[];
+-  const connectionIds = getAcceptedConnectionIds(currentUser.id);
+-  const addableUsers = users.filter((user) => connectionIds.includes(user.id) && !group.memberIds.includes(user.id));
++  const selectedMessage = messages.find((item) => item.id === selectedMessageId);
+ 
+   const sendMessage = (event: FormEvent) => {
+     event.preventDefault();
+@@ -149,33 +148,6 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
+     setMessage("");
+   };
+ 
+-  const addMembers = () => {
+-    const result = addGroupMembers(group.id, selectedIds);
+-    if (!result.ok) {
+-      toast.error(result.error);
+-      return;
+-    }
+-    toast.success("Members added.");
+-    setSelectedIds([]);
+-    setAddOpen(false);
+-  };
+-
+-  const removeMember = (memberId: string) => {
+-    const result = removeGroupMember(group.id, memberId);
+-    if (!result.ok) toast.error(result.error);
+-    else toast.success("Member removed.");
+-  };
+-
+-  const leave = () => {
+-    const result = exitGroup(group.id);
+-    if (!result.ok) {
+-      toast.error(result.error);
+-      return;
+-    }
+-    toast.success("Exited group.");
+-    navigate("/groups");
+-  };
+-
+   return (
+     <AppShell title="Groups">
+       <div className="mx-auto flex min-h-[calc(100dvh-8.5rem)] max-w-3xl flex-col px-4 py-4">
+@@ -184,12 +156,12 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
+             <Link to="/groups"><ArrowLeft className="size-4" /></Link>
+           </Button>
+           <GroupAvatar name={group.name} />
+-          <button type="button" onClick={() => setInfoOpen(true)} className="min-w-0 flex-1 text-left">
++          <Link to={`/groups/${group.id}/info`} className="min-w-0 flex-1 text-left">
+             <h1 className="truncate text-lg font-black">{group.name}</h1>
+             <p className="truncate text-xs text-muted-foreground">{members.map((member) => member.username).join(", ")}</p>
+-          </button>
+-          <Button size="icon" variant="ghost" onClick={() => setInfoOpen(true)} aria-label="Group info">
+-            <Info className="size-4" />
++          </Link>
++          <Button asChild size="icon" variant="ghost" aria-label="Group info">
++            <Link to={`/groups/${group.id}/info`}><Info className="size-4" /></Link>
+           </Button>
+         </header>
+ 
+@@ -202,15 +174,32 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
+             messages.map((item) => {
+               const mine = item.senderId === currentUser.id;
+               const sender = users.find((user) => user.id === item.senderId);
++              const receipt = mine ? getMessageReceipt(item, group.memberIds) : null;
+               return (
+                 <div key={item.id} className={`flex ${mine ? "justify-end" : "justify-start"}`}>
+-                  <div className={`max-w-[82%] rounded-lg px-3 py-2 shadow-soft ${mine ? "bg-primary text-primary-foreground" : "bg-card text-card-foreground"}`}>
++                  <button
++                    type="button"
++                    onClick={() => mine && setSelectedMessageId(item.id)}
++                    aria-label={mine ? `Message status: ${receipt?.label ?? "Sent"}` : undefined}
++                    className={`max-w-[82%] rounded-lg px-3 py-2 text-left shadow-soft ${mine ? "bg-primary text-primary-foreground" : "bg-card text-card-foreground"}`}
++                  >
+                     {!mine && <p className="mb-1 text-xs font-bold text-accent">{sender?.username ?? "Unknown"}</p>}
+                     <p className="whitespace-pre-wrap break-words text-sm">{item.content}</p>
+-                    <p className={`mt-1 text-right text-[10px] ${mine ? "text-primary-foreground/75" : "text-muted-foreground"}`}>
++                    <p className={`mt-1 flex items-center justify-end gap-1 text-[10px] ${mine ? "text-primary-foreground/75" : "text-muted-foreground"}`}>
+                       {formatClockTime24(item.createdAt)}
++                      {receipt && <MessageTicks receipt={receipt} />}
+                     </p>
+-                  </div>
++                    {receipt && (
++                      <p className={`mt-0.5 text-right text-[10px] font-semibold ${receipt.allRead ? "text-sky-300" : "text-primary-foreground/70"}`}>
++                        {receipt.label}
++                      </p>
++                    )}
++                    {mine && (
++                      <p className="mt-0.5 text-right text-[10px] font-medium text-primary-foreground/55">
++                        Tap for message info
++                      </p>
++                    )}
++                  </button>
+                 </div>
+               );
+             })
+@@ -225,9 +214,94 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
+         </form>
+       </div>
+ 
+-      <Dialog open={infoOpen} onOpenChange={setInfoOpen}>
++      <Dialog open={Boolean(selectedMessage)} onOpenChange={(open) => !open && setSelectedMessageId(null)}>
+         <DialogContent className="max-h-[90dvh] overflow-y-auto rounded-lg">
+-          <DialogHeader><DialogTitle>Group info</DialogTitle></DialogHeader>
++          <DialogHeader><DialogTitle>Message info</DialogTitle></DialogHeader>
++          {selectedMessage && <MessageInfo message={selectedMessage} members={members} />}
++        </DialogContent>
++      </Dialog>
++    </AppShell>
++  );
++};
++
++const GroupInfo = ({ groupId }: { groupId: string }) => {
++  const {
++    currentUser,
++    users,
++    groups,
++    getAcceptedConnectionIds,
++    updateGroupName,
++    addGroupMembers,
++    removeGroupMember,
++    exitGroup,
++    toggleMuteGroup,
++    isGroupMuted,
++  } = useApp();
++  const navigate = useNavigate();
++  const [addOpen, setAddOpen] = useState(false);
++  const [editingName, setEditingName] = useState(false);
++  const [name, setName] = useState("");
++  const [selectedIds, setSelectedIds] = useState<string[]>([]);
++
++  const group = groups.find((item) => item.id === groupId);
++  const isMember = Boolean(currentUser && group?.memberIds.includes(currentUser.id));
++
++  if (!currentUser) return null;
++  if (!group || !isMember) return <Navigate to="/groups" replace />;
++
++  const members = group.memberIds.map((id) => users.find((user) => user.id === id)).filter(Boolean) as User[];
++  const connectionIds = getAcceptedConnectionIds(currentUser.id);
++  const addableUsers = users.filter((user) => connectionIds.includes(user.id) && !group.memberIds.includes(user.id));
++
++  const saveName = (event: FormEvent) => {
++    event.preventDefault();
++    const result = updateGroupName(group.id, name);
++    if (!result.ok) {
++      toast.error(result.error);
++      return;
++    }
++    toast.success("Group name updated.");
++    setEditingName(false);
++  };
++
++  const addMembers = () => {
++    const result = addGroupMembers(group.id, selectedIds);
++    if (!result.ok) {
++      toast.error(result.error);
++      return;
++    }
++    toast.success("Members added.");
++    setSelectedIds([]);
++    setAddOpen(false);
++  };
++
++  const removeMember = (memberId: string) => {
++    const result = removeGroupMember(group.id, memberId);
++    if (!result.ok) toast.error(result.error);
++    else toast.success("Member removed.");
++  };
++
++  const leave = () => {
++    const result = exitGroup(group.id);
++    if (!result.ok) {
++      toast.error(result.error);
++      return;
++    }
++    toast.success("Exited group.");
++    navigate("/groups");
++  };
++
++  return (
++    <AppShell title="Groups">
++      <div className="mx-auto max-w-3xl space-y-5 px-4 py-5">
++        <header className="flex items-center gap-3">
++          <Button asChild size="icon" variant="ghost" className="shrink-0">
++            <Link to={`/groups/${group.id}`}><ArrowLeft className="size-4" /></Link>
++          </Button>
++          <h1 className="text-2xl font-black">Group info</h1>
++        </header>
++
++        <section className="space-y-4 rounded-lg border border-border bg-card p-4 shadow-soft">
+           <div className="flex flex-col items-center gap-3 text-center">
+             <GroupAvatar name={group.name} large />
+             <div className="min-w-0">
+@@ -235,44 +309,58 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
+               <p className="text-sm text-muted-foreground">{members.length} members</p>
+             </div>
+           </div>
+-          <div className="space-y-2">
+-            <div className="flex items-center justify-between gap-3">
+-              <h3 className="font-black">Members</h3>
+-              <Button size="sm" onClick={() => setAddOpen(true)}>
+-                <UserPlus className="mr-1 size-4" /> Add
+-              </Button>
+-            </div>
+-            {members.map((member) => (
+-              <PersonRow
+-                key={member.id}
+-                username={member.username}
+-                detail={member.id === currentUser.id ? "You" : "Member"}
+-                action={
+-                  <Button size="sm" variant="outline" onClick={() => removeMember(member.id)}>
+-                    <Trash2 className="mr-1 size-4" /> Remove
+-                  </Button>
+-                }
+-              />
+-            ))}
++
++          {editingName ? (
++            <form onSubmit={saveName} className="flex gap-2">
++              <Input value={name} onChange={(event) => setName(event.target.value)} className="h-11 bg-background" />
++              <Button type="submit" className="h-11">Save</Button>
++            </form>
++          ) : (
++            <Button variant="outline" className="w-full" onClick={() => { setName(group.name); setEditingName(true); }}>
++              <Pencil className="mr-2 size-4" /> Edit name
++            </Button>
++          )}
++        </section>
++
++        <section className="space-y-2">
++          <div className="flex items-center justify-between gap-3">
++            <h3 className="font-black">Members</h3>
++            <Button size="sm" onClick={() => setAddOpen(true)}>
++              <UserPlus className="mr-1 size-4" /> Add
++            </Button>
+           </div>
+-          <button
+-            type="button"
+-            onClick={() => { toggleMuteGroup(group.id); toast.success(isGroupMuted(group.id) ? "Notifications unmuted." : "Notifications muted."); }}
+-            className="flex w-full items-center justify-between gap-3 rounded-lg border border-border bg-card p-3 shadow-soft transition-smooth"
+-          >
+-            <div className="flex items-center gap-3">
+-              {isGroupMuted(group.id) ? <BellOff className="size-4 text-muted-foreground" /> : <Bell className="size-4 text-primary" />}
+-              <span className="text-sm font-bold">{isGroupMuted(group.id) ? "Unmute notifications" : "Mute notifications"}</span>
+-            </div>
+-            <span className={`text-xs font-bold ${isGroupMuted(group.id) ? "text-destructive" : "text-success"}`}>
+-              {isGroupMuted(group.id) ? "Muted" : "Active"}
+-            </span>
+-          </button>
+-          <Button variant="destructive" onClick={leave}>
+-            <LogOut className="mr-2 size-4" /> Exit group
+-          </Button>
+-        </DialogContent>
+-      </Dialog>
++          {members.map((member) => (
++            <PersonRow
++              key={member.id}
++              username={member.username}
++              detail={member.id === currentUser.id ? "You" : "Member"}
++              action={
++                <Button size="sm" variant="outline" onClick={() => removeMember(member.id)}>
++                  <Trash2 className="mr-1 size-4" /> Remove
++                </Button>
++              }
++            />
++          ))}
++        </section>
++
++        <button
++          type="button"
++          onClick={() => { toggleMuteGroup(group.id); toast.success(isGroupMuted(group.id) ? "Notifications unmuted." : "Notifications muted."); }}
++          className="flex w-full items-center justify-between gap-3 rounded-lg border border-border bg-card p-3 shadow-soft transition-smooth"
++        >
++          <div className="flex items-center gap-3">
++            {isGroupMuted(group.id) ? <BellOff className="size-4 text-muted-foreground" /> : <Bell className="size-4 text-primary" />}
++            <span className="text-sm font-bold">{isGroupMuted(group.id) ? "Unmute notifications" : "Mute notifications"}</span>
++          </div>
++          <span className={`text-xs font-bold ${isGroupMuted(group.id) ? "text-destructive" : "text-success"}`}>
++            {isGroupMuted(group.id) ? "Muted" : "Active"}
++          </span>
++        </button>
++
++        <Button variant="destructive" onClick={leave} className="w-full">
++          <LogOut className="mr-2 size-4" /> Exit group
++        </Button>
++      </div>
+ 
+       <Dialog open={addOpen} onOpenChange={setAddOpen}>
+         <DialogContent className="max-h-[90dvh] overflow-y-auto rounded-lg">
+@@ -292,6 +380,108 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
+   );
+ };
+ 
++type MessageReceipt = {
++  label: string;
++  allRead: boolean;
++  anyDelivered: boolean;
++};
++
++const normalizeIdArray = (value?: string[] | string) =>
++  Array.isArray(value) ? value.filter(Boolean) : value ? [value] : [];
++
++const getMessageReceipt = (message: { senderId: string; deliveredTo?: string[]; readBy?: string[] }, memberIds: string[]): MessageReceipt => {
++  const recipientIds = memberIds.filter((id) => id !== message.senderId);
++  const readBy = new Set([message.senderId, ...normalizeIdArray(message.readBy)]);
++  const deliveredTo = new Set(
++    normalizeIdArray(message.deliveredTo).length > 0 ? normalizeIdArray(message.deliveredTo) : recipientIds
++  );
++  const readCount = recipientIds.filter((id) => readBy.has(id)).length;
++  const deliveredCount = recipientIds.filter((id) => deliveredTo.has(id) || readBy.has(id)).length;
++  const totalCount = recipientIds.length;
++  const allRead = totalCount > 0 && readCount === totalCount;
++  const anyDelivered = deliveredCount > 0;
++  const label = readCount > 0
++    ? `Seen by ${readCount}/${totalCount}`
++    : deliveredCount > 0
++      ? `Delivered to ${deliveredCount}/${totalCount}`
++      : `Delivered to ${totalCount}/${totalCount}`;
++
++  return { label, allRead, anyDelivered };
++};
++
++const MessageTicks = ({ receipt }: { receipt: MessageReceipt }) => {
++  return (
++    <CheckCheck className={`size-3.5 ${receipt.allRead ? "text-sky-300" : receipt.anyDelivered ? "text-primary-foreground/75" : "opacity-50"}`} />
++  );
++};
++
++const MessageInfo = ({ message, members }: { message: { deliveredTo?: string[]; readBy?: string[]; senderId: string }; members: User[] }) => {
++  const readBy = new Set([message.senderId, ...normalizeIdArray(message.readBy)]);
++  const recipientIds = members.map((member) => member.id).filter((id) => id !== message.senderId);
++  const deliveredTo = new Set(
++    normalizeIdArray(message.deliveredTo).length > 0 ? normalizeIdArray(message.deliveredTo) : recipientIds
++  );
++  const seenIds = recipientIds.filter((id) => readBy.has(id));
++  const deliveredIds = recipientIds.filter((id) => !readBy.has(id) && deliveredTo.has(id));
++  const seenUsers = seenIds.map((id) => members.find((member) => member.id === id)).filter(Boolean) as User[];
++  const deliveredUsers = deliveredIds.map((id) => members.find((member) => member.id === id)).filter(Boolean) as User[];
++
++  return (
++    <div className="space-y-4">
++      {recipients.length === 0 ? (
++        <div className="rounded-lg border border-dashed border-border bg-card p-6 text-center text-sm text-muted-foreground">No other members in this group.</div>
++      ) : (
++        <>
++          <MessageInfoSection
++            title={`Seen by ${seenUsers.length}`}
++            users={seenUsers}
++            emptyText="No one has seen this yet."
++            icon={<CheckCheck className="size-4 text-sky-400" />}
++            detail="Seen"
++          />
++          <MessageInfoSection
++            title={`Delivered to ${deliveredUsers.length}`}
++            users={deliveredUsers}
++            emptyText="Everyone has seen this message."
++            icon={<CheckCheck className="size-4 text-muted-foreground" />}
++            detail="Delivered"
++          />
++        </>
++      )}
++    </div>
++  );
++};
++
++const MessageInfoSection = ({
++  title,
++  users,
++  emptyText,
++  icon,
++  detail,
++}: {
++  title: string;
++  users: User[];
++  emptyText: string;
++  icon: ReactNode;
++  detail: string;
++}) => (
++  <section className="space-y-2">
++    <h3 className="text-sm font-black">{title}</h3>
++    {users.length === 0 ? (
++      <div className="rounded-lg border border-dashed border-border bg-card p-4 text-sm text-muted-foreground">{emptyText}</div>
++    ) : (
++      users.map((user) => (
++        <PersonRow
++          key={user.id}
++          username={user.username}
++          detail={detail}
++          action={icon}
++        />
++      ))
++    )}
++  </section>
++);
++
+ const MemberPicker = ({
+   users,
+   selectedIds,
