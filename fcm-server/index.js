@@ -24,7 +24,11 @@ try {
 
 // ── Express Server ─────────────────────────────────────────────
 const app = express();
-app.use(cors());
+app.use(cors({
+  origin: "*",
+  methods: ["GET", "POST", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "x-api-key"]
+}));
 app.use(express.json());
 
 // Simple API key authentication
