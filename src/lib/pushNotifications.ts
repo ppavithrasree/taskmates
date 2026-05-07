@@ -1,0 +1,137 @@
+/**
+ * FCM Push Notifications — Client-side module.
+ *
+ * 1. Registers the device with FCM and stores the token in Firestore
+ * 2. Sends push notifications via the free FCM server
+ *
+ * Works when the app is closed and the phone screen is off.
+ * Local notifications (in notifications.ts) handle scheduled/recurring reminders.
+ */
+import { Capacitor } from "@capacitor/core";
+
+// FCM server URL — set in .env as VITE_FCM_SERVER_URL
+const FCM_SERVER_URL = import.meta.env.VITE_FCM_SERVER_URL || "";
+const FCM_API_KEY = import.meta.env.VITE_FCM_API_KEY || "";
+
+type PushModule = {
+  PushNotifications: {
+    requestPermissions: () => Promise<{ receive: string }>;
+    register: () => Promise<void>;
+    addListener: (event: string, cb: (data: unknown) => void) => Promise<{ remove: () => void }>;
+  };
+};
+
+let pushModule: PushModule | null = null;
+
+const loadPush = async (): Promise<PushModule | null> => {
+  if (pushModule) return pushModule;
+  if (!Capacitor.isNativePlatform()) return null;
+  try {
+    pushModule = await import("@capacitor/push-notifications") as unknown as PushModule;
+    return pushModule;
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * Initialize FCM: request permission, register, and store token in Firestore.
+ * Call this once after the user logs in.
+ */
+export const initFCMPush = async (
+  userId: string,
+  onForegroundPush?: (title: string, body: string) => void
+): Promise<void> => {
+  const mod = await loadPush();
+  if (!mod) return;
+
+  try {
+    const perm = await mod.PushNotifications.requestPermissions();
+    if (perm.receive !== "granted") {
+      console.warn("FCM push permission denied");
+      return;
+    }
+
+    await mod.PushNotifications.register();
+
+    // Listen for FCM token
+    await mod.PushNotifications.addListener("registration", async (data: unknown) => {
+      const token = (data as { value?: string })?.value;
+      if (!token) return;
+      console.log("FCM token:", token.slice(0, 20) + "...");
+
+      // Store token in Firestore
+      try {
+        const { getApps } = await import("firebase/app");
+        const { getFirestore, doc, setDoc } = await import("firebase/firestore");
+        const fbApp = getApps()[0];
+        if (!fbApp) return;
+        const db = getFirestore(fbApp);
+        const tokenDocId = `${userId}_${token.slice(-12)}`;
+        await setDoc(doc(db, "fcmTokens", tokenDocId), {
+          userId,
+          token,
+          updatedAt: Date.now(),
+          platform: "android",
+        });
+        console.log("FCM token stored in Firestore");
+      } catch (err) {
+        console.error("Failed to store FCM token:", err);
+      }
+    });
+
+    // Registration error
+    await mod.PushNotifications.addListener("registrationError", (err: unknown) => {
+      console.error("FCM registration error:", err);
+    });
+
+    // Push received while app is in foreground
+    await mod.PushNotifications.addListener("pushNotificationReceived", (notif: unknown) => {
+      const n = notif as { title?: string; body?: string };
+      if (n.title && n.body && onForegroundPush) {
+        onForegroundPush(n.title, n.body);
+      }
+    });
+
+    // Push tapped (app was in background/closed)
+    await mod.PushNotifications.addListener("pushNotificationActionPerformed", () => {
+      // App opens naturally — the notification page handles it
+    });
+  } catch (err) {
+    console.error("FCM init error:", err);
+  }
+};
+
+/**
+ * Send a push notification via the free FCM server.
+ * Call this when creating a notification for another user (friend request, group message, etc.)
+ */
+export const sendFCMPush = async (
+  recipientId: string,
+  title: string,
+  body: string,
+  type: string
+): Promise<void> => {
+  if (!FCM_SERVER_URL) {
+    console.warn("FCM_SERVER_URL not configured — push notification not sent");
+    return;
+  }
+
+  try {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (FCM_API_KEY) headers["x-api-key"] = FCM_API_KEY;
+
+    const resp = await fetch(`${FCM_SERVER_URL}/api/send-notification`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ recipientId, title, body, type }),
+    });
+
+    if (!resp.ok) {
+      console.error("FCM server error:", resp.status, await resp.text());
+    }
+  } catch (err) {
+    // Silently fail — push is best-effort, local notification is the fallback
+    console.warn("Failed to send FCM push (offline?):", err);
+  }
+};

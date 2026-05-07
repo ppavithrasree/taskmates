@@ -15,6 +15,7 @@ import {
 } from "@/lib/firebaseSync";
 import { analyzeDayCoverage, isValidPostRange, postsInLocalDay, startOfLocalDay, gapLabel } from "@/lib/timeCoverage";
 import { requestNotificationPermission, scheduleDailyMidnightNotification, showLocalNotification } from "@/lib/notifications";
+import { initFCMPush, sendFCMPush } from "@/lib/pushNotifications";
 
 const LS_KEY = "taskmates_activity_state_v1";
 const SESSION_KEY = "taskmates_activity_session_v1";
@@ -317,36 +318,16 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     });
   }, [currentUserId]);
 
-  // Show native notification when new notifications arrive from Firebase
-  const seenNotifIdsRef = useRef<Set<string>>(new Set());
-  useEffect(() => {
-    if (!currentUser) return;
-    const myNotifs = state.notifications.filter((n) => n.recipientId === currentUser.id);
-
-    // Find truly new notifications (not seen before)
-    const newNotifs = myNotifs.filter((n) => !seenNotifIdsRef.current.has(n.id));
-
-    // Show a local notification for each new one (skip on initial load by checking if we've initialized)
-    if (seenNotifIdsRef.current.size > 0 && newNotifs.length > 0) {
-      for (const notif of newNotifs) {
-        // Only show if it's recent (within last 5 minutes) to avoid showing old notifications on reload
-        if (Date.now() - notif.createdAt < 300_000) {
-          void showLocalNotification(notif.title, notif.body);
-        }
-      }
-    }
-
-    // Update the seen set
-    seenNotifIdsRef.current = new Set(myNotifs.map((n) => n.id));
-  }, [state.notifications, currentUser]);
-
-  // Request notification permission on first login (with delay for Android to be ready)
+  // Request notification permission and initialize FCM push on first login
   useEffect(() => {
     if (!currentUser) return;
     const timer = window.setTimeout(() => {
       requestNotificationPermission().then((granted) => {
         if (granted) {
           console.log("Notification permission granted");
+          void initFCMPush(currentUser.id, (title, body) => {
+            void showLocalNotification(title, body);
+          });
         } else {
           console.warn("Notification permission denied");
         }
@@ -459,15 +440,12 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         notifications: [...snapshot.notifications, notif],
       }));
       commitOperation(queueFor("notifications", "upsert", notif.id, notif));
+      
+      // Trigger free FCM push notification to the recipient
+      void sendFCMPush(recipientId, title, body, type);
     },
     [currentUser, commitOperation]
   );
-
-  // Request notification permission on first login
-  useEffect(() => {
-    if (!currentUser) return;
-    void requestNotificationPermission();
-  }, [currentUser]);
 
   // Schedule daily midnight notification for coverage gaps
   useEffect(() => {
