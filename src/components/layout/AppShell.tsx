@@ -22,7 +22,15 @@ const Badge = ({ count }: { count: number }) => {
   );
 };
 
-export const AppShell = ({ children, title }: { children: ReactNode; title?: string }) => {
+export const AppShell = ({
+  children,
+  title,
+  mainClassName,
+}: {
+  children: ReactNode;
+  title?: string;
+  mainClassName?: string;
+}) => {
   const { currentUser, logout, unreadNotificationCount, pendingRequestCount, unreadGroupCount } = useApp();
   const navigate = useNavigate();
 
@@ -57,7 +65,7 @@ export const AppShell = ({ children, title }: { children: ReactNode; title?: str
           </div>
         </div>
       </header>
-      <main className="animate-fade-in-up pb-24">{children}</main>
+      <main className={cn("animate-fade-in-up pb-24", mainClassName)}>{children}</main>
       <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-card/95 px-2 pb-[calc(env(safe-area-inset-bottom)+0.4rem)] pt-2 backdrop-blur">
         <div className="mx-auto grid max-w-md grid-cols-5 gap-1">
           {navItems.map((item) => (

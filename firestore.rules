@@ -61,7 +61,7 @@ service cloud.firestore {
           (
             exists(/databases/$(database)/documents/groups/$(resource.data.groupId))
             && request.auth.uid in get(/databases/$(database)/documents/groups/$(resource.data.groupId)).data.memberIds
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["deliveredTo", "readBy", "updatedAt"])
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["deliveredTo", "readBy", "pinnedBy", "updatedAt"])
           )
         );
       allow delete: if request.auth != null

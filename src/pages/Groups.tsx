@@ -1,6 +1,6 @@
 import { FormEvent, ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, Bell, BellOff, Check, CheckCheck, Info, LogOut, Pencil, Plus, Send, Trash2, UserPlus, UsersRound } from "lucide-react";
+import { ArrowLeft, Bell, BellOff, Check, CheckCheck, Info, LogOut, Pencil, Pin, PinOff, Plus, Reply, Send, Trash2, UserPlus, UsersRound, X } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/components/layout/AppShell";
 import { useApp } from "@/context/AppContext";
@@ -118,28 +118,53 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
     groups,
     groupMessages,
     addGroupMessage,
+    toggleGroupMessagePin,
     markGroupMessagesRead,
     markGroupNotificationsRead,
   } = useApp();
   const [message, setMessage] = useState("");
+  const [replyToMessageId, setReplyToMessageId] = useState<string | null>(null);
   const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
+  const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const messagesRef = useRef<HTMLElement | null>(null);
+  const messageRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const swipeRef = useRef<{ id: string; x: number; y: number } | null>(null);
 
   const group = groups.find((item) => item.id === groupId);
   const isMember = Boolean(currentUser && group?.memberIds.includes(currentUser.id));
+  const currentUserDraftId = currentUser?.id;
+  const groupDraftId = group?.id;
 
   const messages = useMemo(
     () => groupMessages.filter((item) => item.groupId === groupId).sort((a, b) => a.createdAt - b.createdAt),
     [groupMessages, groupId]
   );
   const selectedMessage = messages.find((item) => item.id === selectedMessageId);
+  const replyToMessage = messages.find((item) => item.id === replyToMessageId);
+  const pinnedMessages = useMemo(
+    () => messages.filter((item) => (item.pinnedBy ?? []).includes(currentUser?.id ?? "")).sort((a, b) => b.updatedAt - a.updatedAt),
+    [messages, currentUser?.id]
+  );
 
   useEffect(() => {
     if (!currentUser || !group || !isMember) return;
     markGroupMessagesRead(group.id);
     markGroupNotificationsRead(group.id);
   }, [currentUser, group, isMember, markGroupMessagesRead, markGroupNotificationsRead, messages.length]);
+
+  useEffect(() => {
+    if (!currentUserDraftId || !groupDraftId) return;
+    setMessage(localStorage.getItem(groupDraftKey(currentUserDraftId, groupDraftId)) ?? "");
+    setReplyToMessageId(null);
+  }, [currentUserDraftId, groupDraftId]);
+
+  useEffect(() => {
+    if (!currentUserDraftId || !groupDraftId) return;
+    const key = groupDraftKey(currentUserDraftId, groupDraftId);
+    if (message.trim()) localStorage.setItem(key, message);
+    else localStorage.removeItem(key);
+  }, [currentUserDraftId, groupDraftId, message]);
 
   useLayoutEffect(() => {
     const scrollToBottom = () => {
@@ -161,15 +186,38 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
   if (!group || !isMember) return <Navigate to="/groups" replace />;
 
   const members = group.memberIds.map((id) => users.find((user) => user.id === id)).filter(Boolean) as User[];
+  const userById = new Map(users.map((user) => [user.id, user]));
+
+  const focusReply = (item: GroupMessage) => {
+    setReplyToMessageId(item.id);
+    window.requestAnimationFrame(() => composerRef.current?.focus());
+  };
+
+  const showMessage = (id?: string) => {
+    if (!id) return;
+    messageRefs.current[id]?.scrollIntoView({ behavior: "smooth", block: "center" });
+    setHighlightedMessageId(id);
+    window.setTimeout(() => setHighlightedMessageId((current) => current === id ? null : current), 1300);
+  };
+
+  const togglePin = (item: GroupMessage) => {
+    const result = toggleGroupMessagePin(item.id);
+    if (!result.ok) {
+      toast.error(result.error);
+      return;
+    }
+    toast.success((item.pinnedBy ?? []).includes(currentUser.id) ? "Message unpinned." : "Message pinned.");
+  };
 
   const sendMessage = (event: FormEvent) => {
     event.preventDefault();
-    const result = addGroupMessage(group.id, message);
+    const result = addGroupMessage(group.id, message, replyToMessage?.id);
     if (!result.ok) {
       toast.error(result.error);
       return;
     }
     setMessage("");
+    setReplyToMessageId(null);
     window.requestAnimationFrame(() => {
       composerRef.current?.focus();
       const list = messagesRef.current;
@@ -178,8 +226,8 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
   };
 
   return (
-    <AppShell title="Groups">
-      <div className="mx-auto flex h-[calc(100dvh-8.5rem)] max-w-3xl flex-col px-4 py-4">
+    <AppShell title="Groups" mainClassName="h-[calc(100dvh-3.5rem)] overflow-hidden pb-0">
+      <div className="mx-auto flex h-full max-w-3xl flex-col px-4 pb-[calc(env(safe-area-inset-bottom)+5.5rem)] pt-4">
         <header className="mb-4 flex items-center gap-3 rounded-lg border border-border bg-card p-3 shadow-soft">
           <Button asChild size="icon" variant="ghost" className="shrink-0">
             <Link to="/groups"><ArrowLeft className="size-4" /></Link>
@@ -194,6 +242,28 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
           </Button>
         </header>
 
+        {pinnedMessages.length > 0 && (
+          <section className="mb-3 flex gap-2 overflow-x-auto pb-1">
+            {pinnedMessages.map((item) => {
+              const sender = userById.get(item.senderId);
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => showMessage(item.id)}
+                  className="flex max-w-[18rem] shrink-0 items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-left shadow-soft"
+                >
+                  <Pin className="size-3.5 shrink-0 text-primary" />
+                  <span className="min-w-0">
+                    <span className="block truncate text-xs font-black">{sender?.username ?? "Unknown"}</span>
+                    <span className="block truncate text-xs text-muted-foreground">{item.content}</span>
+                  </span>
+                </button>
+              );
+            })}
+          </section>
+        )}
+
         <section ref={messagesRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto pb-2">
           {messages.length === 0 ? (
             <div className="rounded-lg border border-dashed border-border bg-card p-8 text-center text-sm text-muted-foreground">
@@ -202,14 +272,67 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
           ) : (
             messages.map((item) => {
               const mine = item.senderId === currentUser.id;
-              const sender = users.find((user) => user.id === item.senderId);
+              const sender = userById.get(item.senderId);
+              const repliedTo = item.replyToMessageId ? messages.find((messageItem) => messageItem.id === item.replyToMessageId) : undefined;
+              const repliedSender = repliedTo ? userById.get(repliedTo.senderId) : undefined;
+              const pinned = (item.pinnedBy ?? []).includes(currentUser.id);
               return (
-                <div key={item.id} className={`flex ${mine ? "justify-end" : "justify-start"}`}>
-                  <div className={`max-w-[82%] rounded-lg px-3 py-2 shadow-soft ${mine ? "bg-primary text-primary-foreground" : "bg-card text-card-foreground"}`}>
+                <div
+                  key={item.id}
+                  ref={(node) => { messageRefs.current[item.id] = node; }}
+                  className={`flex ${mine ? "justify-end" : "justify-start"}`}
+                  onPointerDown={(event) => {
+                    swipeRef.current = { id: item.id, x: event.clientX, y: event.clientY };
+                  }}
+                  onPointerUp={(event) => {
+                    const start = swipeRef.current;
+                    swipeRef.current = null;
+                    if (!start || start.id !== item.id) return;
+                    const dx = event.clientX - start.x;
+                    const dy = Math.abs(event.clientY - start.y);
+                    if (dx > 55 && dy < 45) focusReply(item);
+                  }}
+                  onPointerCancel={() => { swipeRef.current = null; }}
+                >
+                  <div
+                    className={`max-w-[82%] rounded-lg px-3 py-2 shadow-soft transition-smooth ${
+                      mine ? "bg-primary text-primary-foreground" : "bg-card text-card-foreground"
+                    } ${highlightedMessageId === item.id ? "ring-2 ring-accent" : ""}`}
+                    style={{ touchAction: "pan-y" }}
+                  >
                     {!mine && <p className="mb-1 text-xs font-bold text-accent">{sender?.username ?? "Unknown"}</p>}
+                    {repliedTo && (
+                      <button
+                        type="button"
+                        onClick={() => showMessage(repliedTo.id)}
+                        className={`mb-2 w-full rounded border-l-2 px-2 py-1 text-left text-xs ${
+                          mine ? "border-primary-foreground/60 bg-primary-foreground/10" : "border-primary bg-primary-soft"
+                        }`}
+                      >
+                        <span className="block truncate font-black">{repliedSender?.username ?? "Unknown"}</span>
+                        <span className="block truncate opacity-80">{repliedTo.content}</span>
+                      </button>
+                    )}
                     <p className="whitespace-pre-wrap break-words text-sm">{item.content}</p>
-                    <div className={`mt-1 flex items-center justify-end gap-1 text-[10px] ${mine ? "text-primary-foreground/75" : "text-muted-foreground"}`}>
+                    <div className={`mt-1 flex items-center justify-end gap-1.5 text-[10px] ${mine ? "text-primary-foreground/75" : "text-muted-foreground"}`}>
+                      {pinned && <Pin className="size-3" />}
                       <span>{formatClockTime24(item.createdAt)}</span>
+                      <button
+                        type="button"
+                        onClick={() => focusReply(item)}
+                        className="flex items-center rounded px-0.5"
+                        aria-label="Reply to message"
+                      >
+                        <Reply className="size-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => togglePin(item)}
+                        className="flex items-center rounded px-0.5"
+                        aria-label={pinned ? "Unpin message" : "Pin message"}
+                      >
+                        {pinned ? <PinOff className="size-3.5" /> : <Pin className="size-3.5" />}
+                      </button>
                       {mine && (
                         <button
                           type="button"
@@ -228,7 +351,20 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
           )}
         </section>
 
-        <form onSubmit={sendMessage} className="sticky bottom-20 flex items-end gap-2 rounded-lg border border-border bg-background p-2 shadow-soft sm:bottom-24">
+        <form onSubmit={sendMessage} className="space-y-2 rounded-lg border border-border bg-background p-2 shadow-soft">
+          {replyToMessage && (
+            <div className="flex items-start gap-2 rounded-lg bg-card px-3 py-2 text-left">
+              <Reply className="mt-0.5 size-4 shrink-0 text-primary" />
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-xs font-black">{userById.get(replyToMessage.senderId)?.username ?? "Unknown"}</p>
+                <p className="truncate text-xs text-muted-foreground">{replyToMessage.content}</p>
+              </div>
+              <Button type="button" size="icon" variant="ghost" className="size-7 shrink-0" onClick={() => setReplyToMessageId(null)}>
+                <X className="size-3.5" />
+              </Button>
+            </div>
+          )}
+          <div className="flex items-end gap-2">
           <Textarea
             ref={composerRef}
             value={message}
@@ -250,6 +386,7 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
           >
             <Send className="size-4" />
           </Button>
+          </div>
         </form>
       </div>
 
@@ -506,6 +643,8 @@ const UnreadBadge = ({ count }: { count: number }) => {
     </span>
   );
 };
+
+const groupDraftKey = (userId: string, groupId: string) => `taskmates_group_draft_${userId}_${groupId}`;
 
 const MemberPicker = ({
   users,

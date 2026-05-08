@@ -48,7 +48,8 @@ interface AppContextValue {
   addGroupMembers: (groupId: string, memberIds: string[]) => AuthResult;
   removeGroupMember: (groupId: string, memberId: string) => AuthResult;
   exitGroup: (groupId: string) => AuthResult;
-  addGroupMessage: (groupId: string, content: string) => AuthResult;
+  addGroupMessage: (groupId: string, content: string, replyToMessageId?: string) => AuthResult;
+  toggleGroupMessagePin: (messageId: string) => AuthResult;
   markGroupMessagesRead: (groupId: string) => void;
   markGroupNotificationsRead: (groupId: string) => void;
   markNotificationsForLinkRead: (link: string) => void;
@@ -222,10 +223,12 @@ const mergeGroupMessages = (local: GroupMessage[], remote: GroupMessage[]) => {
       existing.groupId === item.groupId &&
       existing.senderId === item.senderId &&
       existing.content === item.content &&
+      existing.replyToMessageId === item.replyToMessageId &&
       existing.createdAt === item.createdAt;
 
     map.set(item.id, {
       ...existing,
+      pinnedBy: existing.pinnedBy ?? item.pinnedBy,
       deliveredTo: mergeIds(existing.deliveredTo, item.deliveredTo),
       readBy: mergeIds(existing.readBy, item.readBy),
       updatedAt: Math.max(existing.updatedAt, item.updatedAt),
@@ -847,12 +850,15 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     return removeGroupMember(groupId, currentUser.id);
   };
 
-  const addGroupMessage: AppContextValue["addGroupMessage"] = (groupId, content) => {
+  const addGroupMessage: AppContextValue["addGroupMessage"] = (groupId, content, replyToMessageId) => {
     if (!currentUser) return { ok: false, error: "Sign in first." };
     const group = state.groups.find((item) => item.id === groupId);
     if (!group || !group.memberIds.includes(currentUser.id)) return { ok: false, error: "Group not found." };
     const clean = content.trim();
     if (!clean) return { ok: false, error: "Type a message first." };
+    const replyingTo = replyToMessageId
+      ? state.groupMessages.find((item) => item.id === replyToMessageId && item.groupId === groupId)
+      : undefined;
 
     const now = Date.now();
     const message: GroupMessage = {
@@ -860,6 +866,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       groupId,
       senderId: currentUser.id,
       content: clean,
+      replyToMessageId: replyingTo?.id,
       deliveredTo: [currentUser.id],
       readBy: [currentUser.id],
       createdAt: now,
@@ -890,6 +897,27 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         );
       }
     }
+    return { ok: true };
+  };
+
+  const toggleGroupMessagePin: AppContextValue["toggleGroupMessagePin"] = (messageId) => {
+    if (!currentUser) return { ok: false, error: "Sign in first." };
+    const message = state.groupMessages.find((item) => item.id === messageId);
+    if (!message) return { ok: false, error: "Message not found." };
+    const group = state.groups.find((item) => item.id === message.groupId);
+    if (!group?.memberIds.includes(currentUser.id)) return { ok: false, error: "Group not found." };
+
+    const pinnedBy = message.pinnedBy ?? [];
+    const nextPinnedBy = pinnedBy.includes(currentUser.id)
+      ? pinnedBy.filter((id) => id !== currentUser.id)
+      : [...pinnedBy, currentUser.id];
+    const updated = { ...message, pinnedBy: nextPinnedBy, updatedAt: Date.now(), dirty: true };
+
+    setState((snapshot) => ({
+      ...snapshot,
+      groupMessages: snapshot.groupMessages.map((item) => item.id === messageId ? updated : item),
+    }));
+    commitOperation(queueFor("groupMessages", "upsert", updated.id, updated));
     return { ok: true };
   };
 
@@ -1123,6 +1151,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     removeGroupMember,
     exitGroup,
     addGroupMessage,
+    toggleGroupMessagePin,
     markGroupMessagesRead,
     markGroupNotificationsRead,
     markNotificationsForLinkRead,
