@@ -11,6 +11,7 @@ export interface User {
   retentionDays: number;
   theme?: "light" | "dark";
   mutedGroupIds?: string[];
+  notificationsEnabled?: boolean;
   createdAt: number;
   updatedAt: number;
   passwordHash?: string;

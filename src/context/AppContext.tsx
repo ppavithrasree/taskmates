@@ -49,6 +49,9 @@ interface AppContextValue {
   removeGroupMember: (groupId: string, memberId: string) => AuthResult;
   exitGroup: (groupId: string) => AuthResult;
   addGroupMessage: (groupId: string, content: string, replyToMessageId?: string) => AuthResult;
+  updateGroupMessage: (messageId: string, content: string) => AuthResult;
+  deleteGroupMessage: (messageId: string) => AuthResult;
+  clearGroupChat: (groupId: string) => AuthResult;
   toggleGroupMessagePin: (messageId: string) => AuthResult;
   markGroupMessagesRead: (groupId: string) => void;
   markGroupNotificationsRead: (groupId: string) => void;
@@ -58,7 +61,7 @@ interface AppContextValue {
   addPost: (input: { startTime: number; endTime: number; content: string; visibility?: Visibility; customUsernames?: string[] }) => AuthResult;
   updatePost: (id: string, patch: Partial<Pick<Post, "startTime" | "endTime" | "content" | "visibility" | "customUsernames">>) => AuthResult;
   deletePost: (id: string) => void;
-  updateUserSettings: (patch: Partial<Pick<User, "privacy" | "customUsernames" | "retentionDays">>) => void;
+  updateUserSettings: (patch: Partial<Pick<User, "privacy" | "customUsernames" | "retentionDays" | "notificationsEnabled">>) => void;
   updateTheme: (theme: "light" | "dark") => void;
   runRetentionCleanup: () => void;
   markNotificationsRead: () => void;
@@ -354,12 +357,13 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         nextConnections = nextConnections.filter((c) => c.status !== "rejected");
 
         // Merge notifications — only keep ones for current user and less than 10 days old
-        const tenDaysAgo = Date.now() - 10 * 86_400_000;
+        const currentRemoteUser = remote.users?.find((user) => user.id === currentUserId) ?? snapshot.users.find((user) => user.id === currentUserId);
+        const notificationCutoff = Date.now() - (currentRemoteUser?.retentionDays ?? 15) * 86_400_000;
         let nextNotifications = remote.notifications
           ? mergeByFreshness(snapshot.notifications, remote.notifications)
           : snapshot.notifications;
         nextNotifications = nextNotifications.filter(
-          (n) => n.recipientId === currentUserId && n.createdAt > tenDaysAgo
+          (n) => n.recipientId === currentUserId && n.createdAt > notificationCutoff
         );
 
         return {
@@ -402,6 +406,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   // Request notification permission and initialize FCM push on first login
   useEffect(() => {
     if (!currentUser) return;
+    if (currentUser.notificationsEnabled === false) return;
     const timer = window.setTimeout(() => {
       requestNotificationPermission().then((granted) => {
         if (granted) {
@@ -416,20 +421,6 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     }, 1500); // 1.5s delay to ensure Android WebView is fully loaded
     return () => window.clearTimeout(timer);
   }, [currentUser]);
-
-  // Clean up old notifications (>10 days) from Firebase
-  useEffect(() => {
-    const tenDaysAgo = Date.now() - 10 * 86_400_000;
-    const expired = state.notifications.filter((n) => n.createdAt <= tenDaysAgo);
-    if (expired.length === 0) return;
-    setState((snapshot) => ({
-      ...snapshot,
-      notifications: snapshot.notifications.filter((n) => n.createdAt > tenDaysAgo),
-    }));
-    for (const n of expired) {
-      commitOperation(queueFor("notifications", "delete", n.id));
-    }
-  }, [state.notifications, commitOperation]);
 
   // Remove local posts that don't exist in Firebase anymore (privacy enforcement)
   useEffect(() => {
@@ -459,20 +450,37 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   const runRetentionCleanup = useCallback(() => {
     setState((snapshot) => {
       const now = Date.now();
-      const expiredIds = new Set<string>();
+      const expiredPostIds = new Set<string>();
+      const expiredMessageIds = new Set<string>();
+      const expiredNotificationIds = new Set<string>();
       for (const post of snapshot.posts) {
         const owner = snapshot.users.find((user) => user.id === post.userId);
         const retentionDays = owner?.retentionDays ?? 15;
-        if (!post.deletedAt && now - post.endTime > retentionDays * 86_400_000) expiredIds.add(post.id);
+        if (!post.deletedAt && now - post.endTime > retentionDays * 86_400_000) expiredPostIds.add(post.id);
       }
-      if (!expiredIds.size) return { ...snapshot, settings: { ...snapshot.settings, lastRetentionRun: now } };
+      for (const message of snapshot.groupMessages) {
+        const sender = snapshot.users.find((user) => user.id === message.senderId);
+        const retentionDays = sender?.retentionDays ?? 15;
+        if (now - message.createdAt > retentionDays * 86_400_000) expiredMessageIds.add(message.id);
+      }
+      for (const notification of snapshot.notifications) {
+        const recipient = snapshot.users.find((user) => user.id === notification.recipientId);
+        const retentionDays = recipient?.retentionDays ?? 15;
+        if (now - notification.createdAt > retentionDays * 86_400_000) expiredNotificationIds.add(notification.id);
+      }
+      if (!expiredPostIds.size && !expiredMessageIds.size && !expiredNotificationIds.size) {
+        return { ...snapshot, settings: { ...snapshot.settings, lastRetentionRun: now } };
+      }
       return {
         ...snapshot,
-        // Hard-remove expired posts from local state
-        posts: snapshot.posts.filter((post) => !expiredIds.has(post.id)),
+        posts: snapshot.posts.filter((post) => !expiredPostIds.has(post.id)),
+        groupMessages: snapshot.groupMessages.filter((message) => !expiredMessageIds.has(message.id)),
+        notifications: snapshot.notifications.filter((notification) => !expiredNotificationIds.has(notification.id)),
         syncQueue: [
           ...snapshot.syncQueue,
-          ...[...expiredIds].map((id) => queueFor("posts", "delete", id)),
+          ...[...expiredPostIds].map((id) => queueFor("posts", "delete", id)),
+          ...[...expiredMessageIds].map((id) => queueFor("groupMessages", "delete", id)),
+          ...[...expiredNotificationIds].map((id) => queueFor("notifications", "delete", id)),
         ],
         settings: { ...snapshot.settings, lastRetentionRun: now },
       };
@@ -504,6 +512,8 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   const createNotification = useCallback(
     (recipientId: string, type: AppNotification["type"], title: string, body: string, link?: string) => {
       if (!currentUser || recipientId === currentUser.id) return;
+      const recipient = state.users.find((user) => user.id === recipientId);
+      if (recipient?.notificationsEnabled === false) return;
       const now = Date.now();
       const notif: AppNotification = {
         id: uid("notif"),
@@ -525,12 +535,16 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       // Trigger free FCM push notification to the recipient
       void sendFCMPush(recipientId, title, body, type, link);
     },
-    [currentUser, commitOperation]
+    [currentUser, state.users, commitOperation]
   );
 
   // Schedule the next midnight check for the previous day's coverage gaps.
   useEffect(() => {
     if (!currentUser) return;
+    if (currentUser.notificationsEnabled === false) {
+      scheduleDailyMidnightNotification(false);
+      return;
+    }
     const todayStart = startOfLocalDay(Date.now());
     const todayPosts = postsInLocalDay(state.posts, currentUser.id, todayStart);
     const coverage = analyzeDayCoverage(todayPosts, todayStart);
@@ -547,6 +561,10 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         const dayPosts = postsInLocalDay(state.posts, currentUser.id, dayStart);
         const dayCoverage = analyzeDayCoverage(dayPosts, dayStart);
         if (!dayCoverage.isComplete) {
+          if (currentUser.notificationsEnabled === false) {
+            setMidnightTick((value) => value + 1);
+            return;
+          }
           const notificationId = `unlogged_${currentUser.id}_${dateKey(dayStart)}`;
           const now = Date.now();
           const notif: AppNotification = {
@@ -900,6 +918,55 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     return { ok: true };
   };
 
+  const updateGroupMessage: AppContextValue["updateGroupMessage"] = (messageId, content) => {
+    if (!currentUser) return { ok: false, error: "Sign in first." };
+    const message = state.groupMessages.find((item) => item.id === messageId);
+    if (!message || message.senderId !== currentUser.id) return { ok: false, error: "You can edit only your messages." };
+    const clean = content.trim();
+    if (!clean) return { ok: false, error: "Type a message first." };
+    if (clean === message.content) return { ok: false, error: "Use different text." };
+
+    const updated = { ...message, content: clean, updatedAt: Date.now(), dirty: true };
+    setState((snapshot) => ({
+      ...snapshot,
+      groupMessages: snapshot.groupMessages.map((item) => item.id === messageId ? updated : item),
+    }));
+    commitOperation(queueFor("groupMessages", "upsert", updated.id, updated));
+    return { ok: true };
+  };
+
+  const deleteGroupMessage: AppContextValue["deleteGroupMessage"] = (messageId) => {
+    if (!currentUser) return { ok: false, error: "Sign in first." };
+    const message = state.groupMessages.find((item) => item.id === messageId);
+    if (!message) return { ok: false, error: "Message not found." };
+    const group = state.groups.find((item) => item.id === message.groupId);
+    if (!group?.memberIds.includes(currentUser.id)) return { ok: false, error: "Group not found." };
+
+    setState((snapshot) => ({
+      ...snapshot,
+      groupMessages: snapshot.groupMessages.filter((item) => item.id !== messageId),
+    }));
+    commitOperation(queueFor("groupMessages", "delete", messageId));
+    return { ok: true };
+  };
+
+  const clearGroupChat: AppContextValue["clearGroupChat"] = (groupId) => {
+    if (!currentUser) return { ok: false, error: "Sign in first." };
+    const group = state.groups.find((item) => item.id === groupId);
+    if (!group?.memberIds.includes(currentUser.id)) return { ok: false, error: "Group not found." };
+    const messagesToDelete = state.groupMessages.filter((item) => item.groupId === groupId);
+    if (messagesToDelete.length === 0) return { ok: false, error: "Chat is already empty." };
+
+    setState((snapshot) => ({
+      ...snapshot,
+      groupMessages: snapshot.groupMessages.filter((item) => item.groupId !== groupId),
+    }));
+    for (const item of messagesToDelete) {
+      commitOperation(queueFor("groupMessages", "delete", item.id));
+    }
+    return { ok: true };
+  };
+
   const toggleGroupMessagePin: AppContextValue["toggleGroupMessagePin"] = (messageId) => {
     if (!currentUser) return { ok: false, error: "Sign in first." };
     const message = state.groupMessages.find((item) => item.id === messageId);
@@ -1151,6 +1218,9 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     removeGroupMember,
     exitGroup,
     addGroupMessage,
+    updateGroupMessage,
+    deleteGroupMessage,
+    clearGroupChat,
     toggleGroupMessagePin,
     markGroupMessagesRead,
     markGroupNotificationsRead,

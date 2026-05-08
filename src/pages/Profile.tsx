@@ -50,8 +50,8 @@ const Profile = () => {
               <h1 className="truncate text-2xl font-black">{target.username}</h1>
               <p className="truncate text-sm text-muted-foreground">{target.email}</p>
               <div className="mt-3 flex flex-wrap gap-2 text-xs font-bold">
-                <span className="rounded-full bg-primary-soft px-2 py-1 text-primary">{stats.total} retained posts</span>
-                <span className="rounded-full bg-success-soft px-2 py-1 text-success">{target.retentionDays} day retention</span>
+                <span className="rounded-full bg-primary-soft px-2 py-1 text-primary">{stats.total} saved posts</span>
+                <span className="rounded-full bg-success-soft px-2 py-1 text-success">Saved for {target.retentionDays} days</span>
               </div>
             </div>
           </div>
@@ -74,9 +74,9 @@ const Profile = () => {
         </section>
 
         <section className="space-y-3">
-          <h2 className="text-xl font-black">{isOwn ? "Your retained posts" : "Posts"}</h2>
+          <h2 className="text-xl font-black">{isOwn ? "Your saved posts" : "Posts"}</h2>
           {retained.length === 0 ? (
-            <div className="rounded-lg border border-dashed border-border bg-card p-8 text-center text-sm text-muted-foreground">No retained posts.</div>
+            <div className="rounded-lg border border-dashed border-border bg-card p-8 text-center text-sm text-muted-foreground">No saved posts.</div>
           ) : (
             retained.map((post) => <PostCard key={post.id} post={post} />)
           )}

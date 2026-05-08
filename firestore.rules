@@ -65,7 +65,8 @@ service cloud.firestore {
           )
         );
       allow delete: if request.auth != null
-        && resource.data.senderId == request.auth.uid;
+        && exists(/databases/$(database)/documents/groups/$(resource.data.groupId))
+        && request.auth.uid in get(/databases/$(database)/documents/groups/$(resource.data.groupId)).data.memberIds;
     }
 
     // Notifications: users can read/delete their own notifications.

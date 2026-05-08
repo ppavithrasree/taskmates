@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Moon, Shield, Sun, Trash2 } from "lucide-react";
+import { Bell, BellOff, Info, Moon, Shield, Sun, Trash2 } from "lucide-react";
 import { AppShell } from "@/components/layout/AppShell";
 import { useApp } from "@/context/AppContext";
 import type { Visibility } from "@/types";
@@ -9,11 +9,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
+import { Switch } from "@/components/ui/switch";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 const Settings = () => {
   const { currentUser, settings, updateTheme, updateUserSettings, runRetentionCleanup } = useApp();
   const [draftRetentionDays, setDraftRetentionDays] = useState(currentUser?.retentionDays ?? 15);
   const [confirmRetentionOpen, setConfirmRetentionOpen] = useState(false);
+  const [retentionInfoOpen, setRetentionInfoOpen] = useState(false);
   const savedRetentionDays = currentUser?.retentionDays ?? 15;
 
   useEffect(() => {
@@ -92,7 +95,29 @@ const Settings = () => {
         </section>
 
         <section className="space-y-4 rounded-lg border border-border bg-card p-4 shadow-soft">
-          <h2 className="flex items-center gap-2 font-black"><Trash2 className="size-4 text-primary" /> Auto-Delete Period</h2>
+          <div className="flex w-full items-center justify-between gap-3 rounded-lg bg-background p-3 text-left">
+            <div className="flex min-w-0 items-center gap-3">
+              {currentUser.notificationsEnabled === false ? <BellOff className="size-4 text-muted-foreground" /> : <Bell className="size-4 text-primary" />}
+              <div className="min-w-0">
+                <p className="font-black">Notifications</p>
+                <p className="text-xs text-muted-foreground">{currentUser.notificationsEnabled === false ? "Off" : "On"}</p>
+              </div>
+            </div>
+            <Switch
+              checked={currentUser.notificationsEnabled !== false}
+              onCheckedChange={(checked) => updateUserSettings({ notificationsEnabled: checked })}
+              aria-label="Notifications"
+            />
+          </div>
+        </section>
+
+        <section className="space-y-4 rounded-lg border border-border bg-card p-4 shadow-soft">
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="flex items-center gap-2 font-black"><Trash2 className="size-4 text-primary" /> Auto-Delete Period</h2>
+            <Button type="button" size="icon" variant="ghost" className="size-8" onClick={() => setRetentionInfoOpen(true)} aria-label="Auto-delete info">
+              <Info className="size-4" />
+            </Button>
+          </div>
           <div className="flex items-center justify-between text-sm">
             <span>Auto-delete after</span>
             <span className="font-black">{currentUser.retentionDays} days</span>
@@ -132,6 +157,14 @@ const Settings = () => {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      <Dialog open={retentionInfoOpen} onOpenChange={setRetentionInfoOpen}>
+        <DialogContent className="rounded-lg">
+          <DialogHeader><DialogTitle>Auto-delete period</DialogTitle></DialogHeader>
+          <p className="text-sm leading-6 text-muted-foreground">
+            Posts, group messages, and notifications older than this period will be deleted automatically.
+          </p>
+        </DialogContent>
+      </Dialog>
     </AppShell>
   );
 };

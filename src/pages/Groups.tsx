@@ -1,11 +1,12 @@
 import { FormEvent, ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, Bell, BellOff, Check, CheckCheck, Info, LogOut, Pencil, Pin, PinOff, Plus, Reply, Send, Trash2, UserPlus, UsersRound, X } from "lucide-react";
+import { ArrowLeft, Bell, BellOff, Check, CheckCheck, Edit3, Info, LogOut, MoreVertical, Pencil, Pin, PinOff, Plus, Reply, Send, Trash2, UserPlus, UsersRound, X } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/components/layout/AppShell";
 import { useApp } from "@/context/AppContext";
 import { formatClockTime24 } from "@/lib/dateTime";
 import { Button } from "@/components/ui/button";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -118,18 +119,26 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
     groups,
     groupMessages,
     addGroupMessage,
+    updateGroupMessage,
+    deleteGroupMessage,
+    clearGroupChat,
     toggleGroupMessagePin,
     markGroupMessagesRead,
     markGroupNotificationsRead,
   } = useApp();
   const [message, setMessage] = useState("");
   const [replyToMessageId, setReplyToMessageId] = useState<string | null>(null);
+  const [actionMessageId, setActionMessageId] = useState<string | null>(null);
   const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+  const [editingContent, setEditingContent] = useState("");
+  const [clearChatOpen, setClearChatOpen] = useState(false);
   const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const messagesRef = useRef<HTMLElement | null>(null);
   const messageRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const swipeRef = useRef<{ id: string; x: number; y: number } | null>(null);
+  const suppressSelectRef = useRef(false);
 
   const group = groups.find((item) => item.id === groupId);
   const isMember = Boolean(currentUser && group?.memberIds.includes(currentUser.id));
@@ -141,6 +150,8 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
     [groupMessages, groupId]
   );
   const selectedMessage = messages.find((item) => item.id === selectedMessageId);
+  const actionMessage = messages.find((item) => item.id === actionMessageId);
+  const editingMessage = messages.find((item) => item.id === editingMessageId);
   const replyToMessage = messages.find((item) => item.id === replyToMessageId);
   const pinnedMessages = useMemo(
     () => messages.filter((item) => (item.pinnedBy ?? []).includes(currentUser?.id ?? "")).sort((a, b) => b.updatedAt - a.updatedAt),
@@ -209,6 +220,45 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
     toast.success((item.pinnedBy ?? []).includes(currentUser.id) ? "Message unpinned." : "Message pinned.");
   };
 
+  const startEditing = (item: GroupMessage) => {
+    setEditingMessageId(item.id);
+    setEditingContent(item.content);
+    setActionMessageId(null);
+  };
+
+  const saveEditedMessage = (event: FormEvent) => {
+    event.preventDefault();
+    if (!editingMessage) return;
+    const result = updateGroupMessage(editingMessage.id, editingContent);
+    if (!result.ok) {
+      toast.error(result.error);
+      return;
+    }
+    toast.success("Message updated.");
+    setEditingMessageId(null);
+    setEditingContent("");
+  };
+
+  const removeMessage = (item: GroupMessage) => {
+    const result = deleteGroupMessage(item.id);
+    if (!result.ok) {
+      toast.error(result.error);
+      return;
+    }
+    toast.success("Message deleted.");
+    setActionMessageId(null);
+  };
+
+  const clearChat = () => {
+    const result = clearGroupChat(group.id);
+    if (!result.ok) {
+      toast.error(result.error);
+      return;
+    }
+    toast.success("Chat cleared.");
+    setClearChatOpen(false);
+  };
+
   const sendMessage = (event: FormEvent) => {
     event.preventDefault();
     const result = addGroupMessage(group.id, message, replyToMessage?.id);
@@ -239,6 +289,9 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
           </Link>
           <Button asChild size="icon" variant="ghost" aria-label="Group info">
             <Link to={`/groups/${group.id}/info`}><Info className="size-4" /></Link>
+          </Button>
+          <Button size="icon" variant="ghost" aria-label="Clear chat" onClick={() => setClearChatOpen(true)}>
+            <Trash2 className="size-4" />
           </Button>
         </header>
 
@@ -290,7 +343,11 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
                     if (!start || start.id !== item.id) return;
                     const dx = event.clientX - start.x;
                     const dy = Math.abs(event.clientY - start.y);
-                    if (dx > 55 && dy < 45) focusReply(item);
+                    if (dx > 55 && dy < 45) {
+                      suppressSelectRef.current = true;
+                      focusReply(item);
+                      window.setTimeout(() => { suppressSelectRef.current = false; }, 0);
+                    }
                   }}
                   onPointerCancel={() => { swipeRef.current = null; }}
                 >
@@ -299,12 +356,19 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
                       mine ? "bg-primary text-primary-foreground" : "bg-card text-card-foreground"
                     } ${highlightedMessageId === item.id ? "ring-2 ring-accent" : ""}`}
                     style={{ touchAction: "pan-y" }}
+                    onClick={() => {
+                      if (suppressSelectRef.current) return;
+                      setActionMessageId(item.id);
+                    }}
                   >
                     {!mine && <p className="mb-1 text-xs font-bold text-accent">{sender?.username ?? "Unknown"}</p>}
                     {repliedTo && (
                       <button
                         type="button"
-                        onClick={() => showMessage(repliedTo.id)}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          showMessage(repliedTo.id);
+                        }}
                         className={`mb-2 w-full rounded border-l-2 px-2 py-1 text-left text-xs ${
                           mine ? "border-primary-foreground/60 bg-primary-foreground/10" : "border-primary bg-primary-soft"
                         }`}
@@ -319,7 +383,10 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
                       <span>{formatClockTime24(item.createdAt)}</span>
                       <button
                         type="button"
-                        onClick={() => focusReply(item)}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          focusReply(item);
+                        }}
                         className="flex items-center rounded px-0.5"
                         aria-label="Reply to message"
                       >
@@ -327,7 +394,10 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
                       </button>
                       <button
                         type="button"
-                        onClick={() => togglePin(item)}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          togglePin(item);
+                        }}
                         className="flex items-center rounded px-0.5"
                         aria-label={pinned ? "Unpin message" : "Pin message"}
                       >
@@ -336,7 +406,10 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
                       {mine && (
                         <button
                           type="button"
-                          onClick={() => setSelectedMessageId(item.id)}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setSelectedMessageId(item.id);
+                          }}
                           className="flex items-center rounded px-0.5"
                           aria-label="Message info"
                         >
@@ -396,6 +469,51 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
         currentUserId={currentUser.id}
         onOpenChange={(open) => !open && setSelectedMessageId(null)}
       />
+      <MessageActionsDialog
+        message={actionMessage}
+        mine={actionMessage?.senderId === currentUser.id}
+        pinned={Boolean(actionMessage && (actionMessage.pinnedBy ?? []).includes(currentUser.id))}
+        onOpenChange={(open) => !open && setActionMessageId(null)}
+        onReply={(item) => {
+          focusReply(item);
+          setActionMessageId(null);
+        }}
+        onPin={togglePin}
+        onEdit={startEditing}
+        onDelete={removeMessage}
+        onInfo={(item) => {
+          setSelectedMessageId(item.id);
+          setActionMessageId(null);
+        }}
+      />
+      <Dialog open={Boolean(editingMessage)} onOpenChange={(open) => !open && setEditingMessageId(null)}>
+        <DialogContent className="rounded-lg">
+          <DialogHeader><DialogTitle>Edit message</DialogTitle></DialogHeader>
+          <form onSubmit={saveEditedMessage} className="space-y-3">
+            <Textarea value={editingContent} onChange={(event) => setEditingContent(event.target.value)} className="min-h-28 bg-background" />
+            <div className="grid grid-cols-2 gap-2">
+              <Button type="button" variant="outline" onClick={() => setEditingMessageId(null)}>Cancel</Button>
+              <Button type="submit">Save</Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+      <AlertDialog open={clearChatOpen} onOpenChange={setClearChatOpen}>
+        <AlertDialogContent className="rounded-lg">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Clear chat?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This deletes all messages in this group chat.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction className="bg-destructive text-destructive-foreground" onClick={clearChat}>
+              Clear chat
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </AppShell>
   );
 };
@@ -623,6 +741,63 @@ const MessageInfoDialog = ({
     </Dialog>
   );
 };
+
+const MessageActionsDialog = ({
+  message,
+  mine,
+  pinned,
+  onOpenChange,
+  onReply,
+  onPin,
+  onEdit,
+  onDelete,
+  onInfo,
+}: {
+  message?: GroupMessage;
+  mine: boolean;
+  pinned: boolean;
+  onOpenChange: (open: boolean) => void;
+  onReply: (message: GroupMessage) => void;
+  onPin: (message: GroupMessage) => void;
+  onEdit: (message: GroupMessage) => void;
+  onDelete: (message: GroupMessage) => void;
+  onInfo: (message: GroupMessage) => void;
+}) => (
+  <Dialog open={Boolean(message)} onOpenChange={onOpenChange}>
+    <DialogContent className="rounded-lg">
+      <DialogHeader><DialogTitle>Message options</DialogTitle></DialogHeader>
+      {message && (
+        <div className="space-y-3">
+          <div className="rounded-lg bg-primary-soft p-3 text-sm">
+            <p className="line-clamp-3 whitespace-pre-wrap break-words font-medium">{message.content}</p>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <Button type="button" variant="outline" onClick={() => onReply(message)}>
+              <Reply className="mr-2 size-4" /> Reply
+            </Button>
+            <Button type="button" variant="outline" onClick={() => onPin(message)}>
+              {pinned ? <PinOff className="mr-2 size-4" /> : <Pin className="mr-2 size-4" />}
+              {pinned ? "Unpin" : "Pin"}
+            </Button>
+            {mine && (
+              <>
+                <Button type="button" variant="outline" onClick={() => onEdit(message)}>
+                  <Edit3 className="mr-2 size-4" /> Edit
+                </Button>
+                <Button type="button" variant="outline" onClick={() => onInfo(message)}>
+                  <MoreVertical className="mr-2 size-4" /> Info
+                </Button>
+              </>
+            )}
+          </div>
+          <Button type="button" variant="destructive" className="w-full" onClick={() => onDelete(message)}>
+            <Trash2 className="mr-2 size-4" /> Delete message
+          </Button>
+        </div>
+      )}
+    </DialogContent>
+  </Dialog>
+);
 
 const ReceiptSection = ({ title, users, detail }: { title: string; users: User[]; detail: string }) => (
   <section className="space-y-2">
