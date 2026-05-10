@@ -98,6 +98,15 @@ export const showLocalNotification = async (title: string, body: string, id?: nu
   }
 };
 
+export const clearDeliveredNotifications = async () => {
+  if (!Capacitor.isNativePlatform()) return;
+  try {
+    await LocalNotifications.removeAllDeliveredNotifications();
+  } catch {
+    await LocalNotifications.cancel({ notifications: [{ id: NOTIFICATION_BASE_ID }] }).catch(() => undefined);
+  }
+};
+
 /** Schedule the next midnight notification for unlogged gaps. */
 export const scheduleDailyMidnightNotification = async (enabled: boolean, body?: string) => {
   const message = body ?? "There are some time slots that you have not kept logs for.";

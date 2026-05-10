@@ -1,4 +1,5 @@
 import { ReactNode, useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { CheckCircle2, Inbox, Search, Send, Trash2, UserRound, UsersRound, UserPlus, X } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/components/layout/AppShell";
@@ -51,6 +52,7 @@ const Friends = () => {
                     <PersonRow
                       key={user.id}
                       username={user.username}
+                      lastSeenAt={user.lastSeenAt}
                       status={status}
                       mutualCount={mutualCount}
                       action={
@@ -80,6 +82,7 @@ const Friends = () => {
                 <PersonRow
                   key={connection.id}
                   username={sender.username}
+                  lastSeenAt={sender.lastSeenAt}
                   status="incoming"
                   action={
                     <div className="flex gap-1">
@@ -108,6 +111,7 @@ const Friends = () => {
               <PersonRow
                 key={user.id}
                 username={user.username}
+                lastSeenAt={user.lastSeenAt}
                 status="connected"
                 action={
                   <Button size="sm" variant="destructive" onClick={() => removeConnection(user.id)}>
@@ -133,32 +137,36 @@ const statusMeta = {
 
 const PersonRow = ({
   username,
+  lastSeenAt,
   status,
   mutualCount = 0,
   action,
 }: {
   username: string;
+  lastSeenAt?: number;
   status: keyof typeof statusMeta;
   mutualCount?: number;
   action?: ReactNode;
 }) => {
   const meta = statusMeta[status];
   const Icon = meta.icon;
+  const online = Boolean(lastSeenAt && Date.now() - lastSeenAt < 90_000);
 
   return (
     <div className="tap-lift flex items-center justify-between gap-3 rounded-lg border border-border bg-card p-3 shadow-soft">
-      <div className="flex min-w-0 items-center gap-3">
+      <Link to={`/profile/${username}`} className="flex min-w-0 flex-1 items-center gap-3">
         <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-accent-soft font-black text-accent">
           {username.charAt(0).toUpperCase()}
         </div>
         <div className="min-w-0">
           <p className="truncate font-bold">{username}</p>
           <div className="flex items-center gap-1 text-xs text-muted-foreground">
+            <span className={`size-2 rounded-full ${online ? "bg-success" : "bg-destructive"}`} />
             <Icon className={`size-3 ${meta.tone}`} />
-            <span>{status === "none" ? `${mutualCount} mutual${mutualCount === 1 ? "" : "s"}` : meta.label}</span>
+            <span>{online ? "Online" : lastSeenAt ? `Last seen ${new Date(lastSeenAt).toLocaleDateString()}` : "Offline"} - {status === "none" ? `${mutualCount} mutual${mutualCount === 1 ? "" : "s"}` : meta.label}</span>
           </div>
         </div>
-      </div>
+      </Link>
       {action}
     </div>
   );

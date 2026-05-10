@@ -49,6 +49,7 @@ const Profile = () => {
             <div className="min-w-0">
               <h1 className="truncate text-2xl font-black">{target.username}</h1>
               <p className="truncate text-sm text-muted-foreground">{target.email}</p>
+              <PresenceLine lastSeenAt={target.lastSeenAt} />
               <div className="mt-3 flex flex-wrap gap-2 text-xs font-bold">
                 <span className="rounded-full bg-primary-soft px-2 py-1 text-primary">{stats.total} saved posts</span>
                 <span className="rounded-full bg-success-soft px-2 py-1 text-success">Saved for {target.retentionDays} days</span>
@@ -93,5 +94,15 @@ const Info = ({ icon: Icon, label, value }: { icon: typeof Timer; label: string;
     <p className="text-xs text-muted-foreground">{label}</p>
   </div>
 );
+
+const PresenceLine = ({ lastSeenAt }: { lastSeenAt?: number }) => {
+  const online = Boolean(lastSeenAt && Date.now() - lastSeenAt < 90_000);
+  return (
+    <p className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+      <span className={`size-2 rounded-full ${online ? "bg-success" : "bg-destructive"}`} />
+      {online ? "Online" : lastSeenAt ? `Last seen ${new Date(lastSeenAt).toLocaleString()}` : "Offline"}
+    </p>
+  );
+};
 
 export default Profile;

@@ -24,7 +24,7 @@ interface DateParts {
 }
 
 const toParts = (timestamp: number): DateParts => {
-  const date = new Date(Math.min(timestamp, Date.now()));
+  const date = new Date(Math.min(timestamp, Date.now() + 5 * 60_000));
   return {
     date: String(date.getDate()).padStart(2, "0"),
     month: String(date.getMonth() + 1).padStart(2, "0"),
@@ -55,7 +55,7 @@ export const PostForm = ({ initial, onClose, onSaved }: Props) => {
 
   const connectedIds = currentUser ? getAcceptedConnectionIds(currentUser.id) : [];
   const connections = users.filter((u) => connectedIds.includes(u.id));
-  const nowParts = useMemo(() => toParts(Date.now()), []);
+  const nowParts = useMemo(() => toParts(Date.now() + 5 * 60_000), []);
 
   const updatePart = (side: "start" | "end", key: keyof DateParts, value: string) => {
     const clean = value.replace(/\D/g, "").slice(0, key === "year" ? 4 : 2);
@@ -89,8 +89,8 @@ export const PostForm = ({ initial, onClose, onSaved }: Props) => {
             <CalendarDays className="size-4 text-primary" />
             Time range
           </div>
-          <Button type="button" size="sm" variant="outline" className="h-8 bg-card text-xs" onClick={() => setEndParts(toParts(Date.now()))}>
-            Use current time
+          <Button type="button" size="sm" variant="outline" className="h-8 bg-card text-xs" onClick={() => setEndParts(toParts(Date.now() + 5 * 60_000))}>
+            Add 5 min
           </Button>
         </div>
         <div className="space-y-4">

@@ -1,6 +1,6 @@
 import { FormEvent, ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, Bell, BellOff, Check, CheckCheck, Edit3, Info, LogOut, MoreVertical, Pencil, Pin, PinOff, Plus, Reply, Send, Trash2, UserPlus, UsersRound, X } from "lucide-react";
+import { ArrowLeft, Bell, BellOff, Check, CheckCheck, Edit3, Info, LogOut, MoreVertical, Pencil, Pin, PinOff, Plus, Reply, Send, SmilePlus, Trash2, UserPlus, UsersRound, X } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/components/layout/AppShell";
 import { useApp } from "@/context/AppContext";
@@ -19,7 +19,7 @@ const Groups = () => {
 };
 
 const GroupsList = () => {
-  const { currentUser, users, visibleGroups, groupMessages, getAcceptedConnectionIds, createGroup } = useApp();
+  const { currentUser, users, visibleGroups, groupMessages, getAcceptedConnectionIds, createGroup, getDisplayMessageContent } = useApp();
   const [createOpen, setCreateOpen] = useState(false);
   const [name, setName] = useState("");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -81,7 +81,7 @@ const GroupsList = () => {
                     </div>
                     <div className="mt-1 flex items-center gap-3">
                       <p className={`min-w-0 flex-1 truncate text-sm ${unreadCount > 0 ? "font-bold text-foreground" : "text-muted-foreground"}`}>
-                        {lastMessage ? `${sender?.username ?? "Unknown"}: ${lastMessage.content}` : "Tap to start chatting"}
+                        {lastMessage ? `${sender?.username ?? "Unknown"}: ${getDisplayMessageContent(lastMessage)}` : "Tap to start chatting"}
                       </p>
                       <UnreadBadge count={unreadCount} />
                     </div>
@@ -123,8 +123,11 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
     deleteGroupMessage,
     clearGroupChat,
     toggleGroupMessagePin,
+    toggleGroupMessageReaction,
     markGroupMessagesRead,
     markGroupNotificationsRead,
+    updateTypingStatus,
+    getDisplayMessageContent,
   } = useApp();
   const [message, setMessage] = useState("");
   const [replyToMessageId, setReplyToMessageId] = useState<string | null>(null);
@@ -157,6 +160,10 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
     () => messages.filter((item) => (item.pinnedBy ?? []).includes(currentUser?.id ?? "")).sort((a, b) => b.updatedAt - a.updatedAt),
     [messages, currentUser?.id]
   );
+  const typingUsers = useMemo(
+    () => users.filter((user) => user.id !== currentUser?.id && user.typingGroupId === groupId && Date.now() - (user.typingUpdatedAt ?? 0) < 6000),
+    [users, currentUser?.id, groupId]
+  );
 
   useEffect(() => {
     if (!currentUser || !group || !isMember) return;
@@ -176,6 +183,20 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
     if (message.trim()) localStorage.setItem(key, message);
     else localStorage.removeItem(key);
   }, [currentUserDraftId, groupDraftId, message]);
+
+  useEffect(() => {
+    if (!isMember) return;
+    updateTypingStatus(message.trim() ? groupId : undefined);
+    const timer = window.setTimeout(() => updateTypingStatus(undefined), 5000);
+    return () => window.clearTimeout(timer);
+  }, [message, groupId, isMember, updateTypingStatus]);
+
+  useEffect(() => {
+    const field = composerRef.current;
+    if (!field) return;
+    field.style.height = "auto";
+    field.style.height = `${Math.min(field.scrollHeight, 144)}px`;
+  }, [message]);
 
   useLayoutEffect(() => {
     const scrollToBottom = () => {
@@ -222,14 +243,14 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
 
   const startEditing = (item: GroupMessage) => {
     setEditingMessageId(item.id);
-    setEditingContent(item.content);
+    setEditingContent(getDisplayMessageContent(item));
     setActionMessageId(null);
   };
 
-  const saveEditedMessage = (event: FormEvent) => {
+  const saveEditedMessage = async (event: FormEvent) => {
     event.preventDefault();
     if (!editingMessage) return;
-    const result = updateGroupMessage(editingMessage.id, editingContent);
+    const result = await updateGroupMessage(editingMessage.id, editingContent);
     if (!result.ok) {
       toast.error(result.error);
       return;
@@ -259,14 +280,15 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
     setClearChatOpen(false);
   };
 
-  const sendMessage = (event: FormEvent) => {
+  const sendMessage = async (event: FormEvent) => {
     event.preventDefault();
-    const result = addGroupMessage(group.id, message, replyToMessage?.id);
+    const result = await addGroupMessage(group.id, message, replyToMessage?.id);
     if (!result.ok) {
       toast.error(result.error);
       return;
     }
     setMessage("");
+    updateTypingStatus(undefined);
     setReplyToMessageId(null);
     window.requestAnimationFrame(() => {
       composerRef.current?.focus();
@@ -309,7 +331,7 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
                   <Pin className="size-3.5 shrink-0 text-primary" />
                   <span className="min-w-0">
                     <span className="block truncate text-xs font-black">{sender?.username ?? "Unknown"}</span>
-                    <span className="block truncate text-xs text-muted-foreground">{item.content}</span>
+                      <span className="block truncate text-xs text-muted-foreground">{getDisplayMessageContent(item)}</span>
                   </span>
                 </button>
               );
@@ -329,6 +351,7 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
               const repliedTo = item.replyToMessageId ? messages.find((messageItem) => messageItem.id === item.replyToMessageId) : undefined;
               const repliedSender = repliedTo ? userById.get(repliedTo.senderId) : undefined;
               const pinned = (item.pinnedBy ?? []).includes(currentUser.id);
+              const displayContent = getDisplayMessageContent(item);
               return (
                 <div
                   key={item.id}
@@ -353,7 +376,7 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
                 >
                   <div
                     className={`max-w-[82%] rounded-lg px-3 py-2 shadow-soft transition-smooth ${
-                      mine ? "bg-primary text-primary-foreground" : "bg-card text-card-foreground"
+                      mine ? "bg-emerald-700 text-white dark:bg-emerald-500 dark:text-emerald-950" : "bg-card text-card-foreground"
                     } ${highlightedMessageId === item.id ? "ring-2 ring-accent" : ""}`}
                     style={{ touchAction: "pan-y" }}
                     onClick={() => {
@@ -370,15 +393,16 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
                           showMessage(repliedTo.id);
                         }}
                         className={`mb-2 w-full rounded border-l-2 px-2 py-1 text-left text-xs ${
-                          mine ? "border-primary-foreground/60 bg-primary-foreground/10" : "border-primary bg-primary-soft"
+                          mine ? "border-white/60 bg-white/10" : "border-primary bg-primary-soft"
                         }`}
                       >
                         <span className="block truncate font-black">{repliedSender?.username ?? "Unknown"}</span>
-                        <span className="block truncate opacity-80">{repliedTo.content}</span>
+                        <span className="block truncate opacity-80">{getDisplayMessageContent(repliedTo)}</span>
                       </button>
                     )}
-                    <p className="whitespace-pre-wrap break-words text-sm">{item.content}</p>
-                    <div className={`mt-1 flex items-center justify-end gap-1.5 text-[10px] ${mine ? "text-primary-foreground/75" : "text-muted-foreground"}`}>
+                    <LinkifiedText text={displayContent} />
+                    <ReactionSummary reactions={item.reactions} />
+                    <div className={`mt-1 flex items-center justify-end gap-1.5 text-[10px] ${mine ? "text-white/80 dark:text-emerald-950/75" : "text-muted-foreground"}`}>
                       {pinned && <Pin className="size-3" />}
                       <span>{formatClockTime24(item.createdAt)}</span>
                       <button
@@ -424,13 +448,20 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
           )}
         </section>
 
+        {typingUsers.length > 0 && (
+          <div className="mb-2 flex items-center gap-2 px-1 text-xs font-bold text-muted-foreground">
+            <span>{typingUsers.map((user) => user.username).join(", ")} typing</span>
+            <TypingDots />
+          </div>
+        )}
+
         <form onSubmit={sendMessage} className="space-y-2 rounded-lg border border-border bg-background p-2 shadow-soft">
           {replyToMessage && (
             <div className="flex items-start gap-2 rounded-lg bg-card px-3 py-2 text-left">
               <Reply className="mt-0.5 size-4 shrink-0 text-primary" />
               <div className="min-w-0 flex-1">
                 <p className="truncate text-xs font-black">{userById.get(replyToMessage.senderId)?.username ?? "Unknown"}</p>
-                <p className="truncate text-xs text-muted-foreground">{replyToMessage.content}</p>
+                <p className="truncate text-xs text-muted-foreground">{getDisplayMessageContent(replyToMessage)}</p>
               </div>
               <Button type="button" size="icon" variant="ghost" className="size-7 shrink-0" onClick={() => setReplyToMessageId(null)}>
                 <X className="size-3.5" />
@@ -444,7 +475,7 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
             onChange={(event) => setMessage(event.target.value)}
             placeholder="Message"
             rows={1}
-            className="max-h-32 min-h-11 resize-none bg-card py-2.5"
+            className="max-h-36 min-h-11 resize-none overflow-y-auto bg-card py-2.5"
           />
           <Button
             type="submit"
@@ -465,12 +496,14 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
 
       <MessageInfoDialog
         message={selectedMessage}
+        displayContent={selectedMessage ? getDisplayMessageContent(selectedMessage) : ""}
         members={members}
         currentUserId={currentUser.id}
         onOpenChange={(open) => !open && setSelectedMessageId(null)}
       />
       <MessageActionsDialog
         message={actionMessage}
+        displayContent={actionMessage ? getDisplayMessageContent(actionMessage) : ""}
         mine={actionMessage?.senderId === currentUser.id}
         pinned={Boolean(actionMessage && (actionMessage.pinnedBy ?? []).includes(currentUser.id))}
         onOpenChange={(open) => !open && setActionMessageId(null)}
@@ -479,6 +512,10 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
           setActionMessageId(null);
         }}
         onPin={togglePin}
+        onReact={(item, reaction) => {
+          const result = toggleGroupMessageReaction(item.id, reaction);
+          if (!result.ok) toast.error(result.error);
+        }}
         onEdit={startEditing}
         onDelete={removeMessage}
         onInfo={(item) => {
@@ -637,6 +674,7 @@ const GroupInfo = ({ groupId }: { groupId: string }) => {
             <PersonRow
               key={member.id}
               username={member.username}
+              lastSeenAt={member.lastSeenAt}
               detail={member.id === currentUser.id ? "You" : "Member"}
               action={
                 <Button size="sm" variant="outline" onClick={() => removeMember(member.id)}>
@@ -706,6 +744,7 @@ const MessageTicks = ({
 
 const MessageInfoDialog = ({
   message,
+  displayContent,
   members,
   currentUserId,
   onOpenChange,
@@ -729,7 +768,7 @@ const MessageInfoDialog = ({
         {message && (
           <div className="space-y-4">
             <div className="rounded-lg bg-primary-soft p-3 text-sm">
-              <p className="whitespace-pre-wrap break-words font-medium">{message.content}</p>
+              <p className="whitespace-pre-wrap break-words font-medium">{displayContent}</p>
               <p className="mt-1 text-[10px] font-bold text-muted-foreground">{formatClockTime24(message.createdAt)}</p>
             </div>
             <ReceiptSection title="Seen by" users={seenMembers} detail="Seen" />
@@ -744,32 +783,43 @@ const MessageInfoDialog = ({
 
 const MessageActionsDialog = ({
   message,
+  displayContent,
   mine,
   pinned,
   onOpenChange,
   onReply,
   onPin,
+  onReact,
   onEdit,
   onDelete,
   onInfo,
 }: {
   message?: GroupMessage;
+  displayContent: string;
   mine: boolean;
   pinned: boolean;
   onOpenChange: (open: boolean) => void;
   onReply: (message: GroupMessage) => void;
   onPin: (message: GroupMessage) => void;
+  onReact: (message: GroupMessage, reaction: string) => void;
   onEdit: (message: GroupMessage) => void;
   onDelete: (message: GroupMessage) => void;
   onInfo: (message: GroupMessage) => void;
 }) => (
   <Dialog open={Boolean(message)} onOpenChange={onOpenChange}>
-    <DialogContent className="rounded-lg">
+    <DialogContent className="max-h-[90dvh] overflow-y-auto rounded-lg sm:max-w-md">
       <DialogHeader><DialogTitle>Message options</DialogTitle></DialogHeader>
       {message && (
         <div className="space-y-3">
-          <div className="rounded-lg bg-primary-soft p-3 text-sm">
-            <p className="line-clamp-3 whitespace-pre-wrap break-words font-medium">{message.content}</p>
+          <div className="max-h-40 overflow-y-auto rounded-lg bg-primary-soft p-3 text-sm">
+            <p className="line-clamp-3 whitespace-pre-wrap break-words font-medium">{displayContent}</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {REACTIONS.map((reaction) => (
+              <Button key={reaction} type="button" variant="outline" size="sm" className="h-9 px-3 text-base" onClick={() => onReact(message, reaction)}>
+                <SmilePlus className="mr-1 size-3.5" /> {reaction}
+              </Button>
+            ))}
           </div>
           <div className="grid grid-cols-2 gap-2">
             <Button type="button" variant="outline" onClick={() => onReply(message)}>
@@ -819,6 +869,53 @@ const UnreadBadge = ({ count }: { count: number }) => {
   );
 };
 
+const REACTIONS = ["👍", "❤️", "😂", "🔥", "👏"];
+
+const ReactionSummary = ({ reactions }: { reactions?: Record<string, string> }) => {
+  const counts = Object.values(reactions ?? {}).reduce<Record<string, number>>((acc, reaction) => {
+    acc[reaction] = (acc[reaction] ?? 0) + 1;
+    return acc;
+  }, {});
+  const entries = Object.entries(counts);
+  if (!entries.length) return null;
+  return (
+    <div className="mt-2 flex flex-wrap gap-1">
+      {entries.map(([reaction, count]) => (
+        <span key={reaction} className="rounded-full bg-background/80 px-2 py-0.5 text-[11px] font-bold text-foreground shadow-sm">
+          {reaction} {count}
+        </span>
+      ))}
+    </div>
+  );
+};
+
+const urlPattern = /(https?:\/\/[^\s<]+|www\.[^\s<]+)/gi;
+
+const LinkifiedText = ({ text }: { text: string }) => {
+  const parts = text.split(urlPattern);
+  return (
+    <p className="whitespace-pre-wrap break-words text-sm">
+      {parts.map((part, index) => {
+        if (!part.match(urlPattern)) return <span key={`${part}-${index}`}>{part}</span>;
+        const href = part.startsWith("http") ? part : `https://${part}`;
+        return (
+          <a key={`${part}-${index}`} href={href} target="_blank" rel="noreferrer" className="font-bold underline underline-offset-2" onClick={(event) => event.stopPropagation()}>
+            {part}
+          </a>
+        );
+      })}
+    </p>
+  );
+};
+
+const TypingDots = () => (
+  <span className="flex items-center gap-0.5">
+    <span className="size-1.5 animate-bounce rounded-full bg-muted-foreground [animation-delay:-0.2s]" />
+    <span className="size-1.5 animate-bounce rounded-full bg-muted-foreground [animation-delay:-0.1s]" />
+    <span className="size-1.5 animate-bounce rounded-full bg-muted-foreground" />
+  </span>
+);
+
 const groupDraftKey = (userId: string, groupId: string) => `taskmates_group_draft_${userId}_${groupId}`;
 
 const MemberPicker = ({
@@ -845,7 +942,7 @@ const MemberPicker = ({
             selectedIds.includes(user.id) ? "border-primary bg-primary-soft" : "border-border bg-card"
           }`}
         >
-          <PersonIdentity username={user.username} detail="Connection" />
+          <PersonIdentity username={user.username} detail="Connection" lastSeenAt={user.lastSeenAt} />
           <span className={`flex size-5 items-center justify-center rounded border text-xs font-black ${
             selectedIds.includes(user.id) ? "border-primary bg-primary text-primary-foreground" : "border-border"
           }`}>
@@ -858,34 +955,32 @@ const MemberPicker = ({
 );
 
 const GroupAvatar = ({ name, large = false }: { name: string; large?: boolean }) => (
-  <div className={`${large ? "size-20" : "size-12"} relative shrink-0`}>
-    <div className={`absolute left-0 top-2 flex ${large ? "size-11" : "size-7"} items-center justify-center rounded-full bg-accent-soft text-accent`}>
-      <UsersRound className={large ? "size-5" : "size-3.5"} />
-    </div>
-    <div className={`absolute right-0 top-2 flex ${large ? "size-11" : "size-7"} items-center justify-center rounded-full bg-success-soft text-success`}>
-      <UsersRound className={large ? "size-5" : "size-3.5"} />
-    </div>
-    <div className={`absolute bottom-0 left-1/2 flex ${large ? "size-14" : "size-9"} -translate-x-1/2 items-center justify-center rounded-full bg-gradient-primary font-black text-primary-foreground shadow-soft`}>
+  <div className={`flex ${large ? "size-20 text-2xl" : "size-12 text-base"} shrink-0 items-center justify-center rounded-lg bg-gradient-primary font-black text-primary-foreground shadow-soft`}>
+    <div className="flex flex-col items-center gap-0.5">
+      <UsersRound className={large ? "size-5" : "size-4"} />
       {name.charAt(0).toUpperCase()}
     </div>
   </div>
 );
 
-const PersonRow = ({ username, detail, action }: { username: string; detail: string; action?: ReactNode }) => (
+const PersonRow = ({ username, detail, lastSeenAt, action }: { username: string; detail: string; lastSeenAt?: number; action?: ReactNode }) => (
   <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-card p-3 shadow-soft">
-    <PersonIdentity username={username} detail={detail} />
+    <PersonIdentity username={username} detail={detail} lastSeenAt={lastSeenAt} />
     {action}
   </div>
 );
 
-const PersonIdentity = ({ username, detail }: { username: string; detail: string }) => (
+const PersonIdentity = ({ username, detail, lastSeenAt }: { username: string; detail: string; lastSeenAt?: number }) => (
   <div className="flex min-w-0 items-center gap-3">
-    <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-accent-soft font-black text-accent">
+    <div className="relative flex size-10 shrink-0 items-center justify-center rounded-lg bg-accent-soft font-black text-accent">
       {username.charAt(0).toUpperCase()}
+      <span className={`absolute -right-0.5 -top-0.5 size-2.5 rounded-full ring-2 ring-card ${lastSeenAt && Date.now() - lastSeenAt < 90_000 ? "bg-success" : "bg-destructive"}`} />
     </div>
     <div className="min-w-0">
       <p className="truncate font-bold">{username}</p>
-      <p className="truncate text-xs text-muted-foreground">{detail}</p>
+      <p className="truncate text-xs text-muted-foreground">
+        {lastSeenAt && Date.now() - lastSeenAt < 90_000 ? "Online" : lastSeenAt ? `Last seen ${new Date(lastSeenAt).toLocaleDateString()}` : detail}
+      </p>
     </div>
   </div>
 );
