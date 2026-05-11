@@ -17,7 +17,6 @@ type PushModule = {
   PushNotifications: {
     requestPermissions: () => Promise<{ receive: string }>;
     register: () => Promise<void>;
-    removeAllDeliveredNotifications?: () => Promise<void>;
     addListener: (event: string, cb: (data: unknown) => void) => Promise<{ remove: () => void }>;
   };
 };
@@ -29,11 +28,6 @@ let listenerHandles: { remove: () => void }[] = [];
 
 export const setActivePushPath = (pathname: string) => {
   activePath = pathname;
-};
-
-export const clearDeliveredPushNotifications = async () => {
-  const mod = await loadPush();
-  await mod?.PushNotifications.removeAllDeliveredNotifications?.().catch(() => undefined);
 };
 
 const loadPush = async (): Promise<PushModule | null> => {
@@ -53,8 +47,7 @@ const loadPush = async (): Promise<PushModule | null> => {
  */
 export const initFCMPush = async (
   userId: string,
-  onForegroundPush?: (title: string, body: string) => void,
-  onNotificationTap?: (link?: string) => void
+  onForegroundPush?: (title: string, body: string) => void
 ): Promise<void> => {
   const mod = await loadPush();
   if (!mod) return;
@@ -129,9 +122,8 @@ export const initFCMPush = async (
     }));
 
     // Push tapped (app was in background/closed)
-    listenerHandles.push(await mod.PushNotifications.addListener("pushNotificationActionPerformed", (event: unknown) => {
-      const data = (event as { notification?: { data?: { link?: string } } })?.notification?.data;
-      onNotificationTap?.(data?.link);
+    listenerHandles.push(await mod.PushNotifications.addListener("pushNotificationActionPerformed", () => {
+      // App opens naturally — the notification page handles it
     }));
   } catch (err) {
     initializedUserId = null;

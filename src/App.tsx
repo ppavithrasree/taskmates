@@ -7,8 +7,7 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AppProvider } from "@/context/AppContext";
-import { clearDeliveredPushNotifications, setActivePushPath } from "@/lib/pushNotifications";
-import { clearDeliveredNotifications } from "@/lib/notifications";
+import { setActivePushPath } from "@/lib/pushNotifications";
 import Index from "./pages/Index.tsx";
 import AuthPage from "./pages/AuthPage.tsx";
 import Dashboard from "./pages/Dashboard.tsx";
@@ -45,11 +44,6 @@ const BackRouteController = () => {
   useEffect(() => {
     pathRef.current = location.pathname;
     setActivePushPath(location.pathname);
-  }, [location.pathname]);
-
-  useEffect(() => {
-    void clearDeliveredNotifications();
-    void clearDeliveredPushNotifications();
   }, [location.pathname]);
 
   useEffect(() => {

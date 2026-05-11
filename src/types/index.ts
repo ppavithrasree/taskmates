@@ -6,10 +6,6 @@ export interface User {
   id: string;
   username: string;
   email: string;
-  publicKey?: string;
-  lastSeenAt?: number;
-  typingGroupId?: string;
-  typingUpdatedAt?: number;
   privacy: Visibility;
   customUsernames: string[];
   retentionDays: number;
@@ -34,7 +30,6 @@ export interface Post {
   createdAt: number;
   updatedAt: number;
   deletedAt?: number;
-  reactions?: Record<string, string>;
   dirty?: boolean;
 }
 
@@ -62,12 +57,8 @@ export interface GroupMessage {
   groupId: string;
   senderId: string;
   content: string;
-  encryptedContent?: string;
-  encryptedKeys?: Record<string, string>;
-  encryptionVersion?: number;
   replyToMessageId?: string;
   pinnedBy?: string[];
-  reactions?: Record<string, string>;
   deliveredTo?: string[];
   readBy?: string[];
   createdAt: number;

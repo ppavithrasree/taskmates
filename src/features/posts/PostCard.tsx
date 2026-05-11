@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { Clock3, Globe2, Pencil, SmilePlus, Trash2, Users } from "lucide-react";
+import { Clock3, Globe2, Pencil, Trash2, Users } from "lucide-react";
 import { toast } from "sonner";
 import type { Post, Visibility } from "@/types";
 import { useApp } from "@/context/AppContext";
@@ -17,7 +17,7 @@ const visibility: Record<Visibility, { label: string; icon: typeof Globe2; class
 };
 
 export const PostCard = ({ post }: { post: Post }) => {
-  const { currentUser, users, deletePost, togglePostReaction } = useApp();
+  const { currentUser, users, deletePost } = useApp();
   const [editOpen, setEditOpen] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const editHistoryRef = useRef(false);
@@ -75,29 +75,6 @@ export const PostCard = ({ post }: { post: Post }) => {
       </div>
       <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">{post.content}</p>
 
-      <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-border pt-3">
-        {REACTIONS.map((reaction) => {
-          const active = currentUser ? post.reactions?.[currentUser.id] === reaction : false;
-          const count = Object.values(post.reactions ?? {}).filter((item) => item === reaction).length;
-          return (
-            <Button
-              key={reaction}
-              type="button"
-              size="sm"
-              variant={active ? "default" : "outline"}
-              className="h-8 px-2 text-sm"
-              onClick={() => {
-                const result = togglePostReaction(post.id, reaction);
-                if (!result.ok) toast.error(result.error);
-              }}
-            >
-              <SmilePlus className="mr-1 size-3.5" />
-              {reaction} {count > 0 ? count : ""}
-            </Button>
-          );
-        })}
-      </div>
-
       {isMine && (
         <footer className="mt-4 flex gap-1 border-t border-border pt-3">
           <Button size="sm" variant="ghost" onClick={() => setEditOpen(true)}><Pencil className="mr-1 size-3.5" /> Edit</Button>
@@ -135,7 +112,5 @@ export const PostCard = ({ post }: { post: Post }) => {
     </article>
   );
 };
-
-const REACTIONS = ["👍", "❤️", "😂", "🔥", "👏"];
 
 export default PostCard;
