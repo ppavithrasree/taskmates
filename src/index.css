@@ -193,6 +193,28 @@
     -webkit-tap-highlight-color: transparent;
   }
 
+  .chat-bubble {
+    box-shadow: 0 1px 2px hsl(229 34% 14% / 0.08);
+    contain: paint;
+    isolation: isolate;
+    transform: none;
+    transition: background-color 0.16s ease, color 0.16s ease, box-shadow 0.16s ease;
+    will-change: auto;
+  }
+
+  .chat-bubble,
+  .chat-bubble * {
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  .chat-bubble-text {
+    display: block;
+    min-width: 0;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
   /* Disable text selection on interactive elements for app-like feel */
   button, a, nav, .tap-lift {
     -webkit-user-select: none;
@@ -205,4 +227,4 @@
       transform: none;
     }
   }
-}
+}

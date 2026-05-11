@@ -24,7 +24,7 @@ interface DateParts {
 }
 
 const toParts = (timestamp: number): DateParts => {
-  const date = new Date(Math.min(timestamp, Date.now()));
+  const date = new Date(timestamp);
   return {
     date: String(date.getDate()).padStart(2, "0"),
     month: String(date.getMonth() + 1).padStart(2, "0"),

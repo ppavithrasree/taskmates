@@ -1,4 +1,5 @@
 import { ReactNode, useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { CheckCircle2, Inbox, Search, Send, Trash2, UserRound, UsersRound, UserPlus, X } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/components/layout/AppShell";
@@ -147,7 +148,7 @@ const PersonRow = ({
 
   return (
     <div className="tap-lift flex items-center justify-between gap-3 rounded-lg border border-border bg-card p-3 shadow-soft">
-      <div className="flex min-w-0 items-center gap-3">
+      <Link to={`/profile/${username}`} className="flex min-w-0 flex-1 items-center gap-3">
         <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-accent-soft font-black text-accent">
           {username.charAt(0).toUpperCase()}
         </div>
@@ -158,7 +159,7 @@ const PersonRow = ({
             <span>{status === "none" ? `${mutualCount} mutual${mutualCount === 1 ? "" : "s"}` : meta.label}</span>
           </div>
         </div>
-      </div>
+      </Link>
       {action}
     </div>
   );

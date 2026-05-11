@@ -1,6 +1,6 @@
 import { FormEvent, ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, Bell, BellOff, Check, CheckCheck, Edit3, Info, LogOut, MoreVertical, Pencil, Pin, PinOff, Plus, Reply, Send, Trash2, UserPlus, UsersRound, X } from "lucide-react";
+import { ArrowLeft, Bell, BellOff, Check, CheckCheck, Edit3, Info, LogOut, MoreVertical, Pencil, Pin, PinOff, Plus, Reply, Send, SmilePlus, Trash2, UserPlus, UsersRound, X } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/components/layout/AppShell";
 import { useApp } from "@/context/AppContext";
@@ -123,6 +123,7 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
     deleteGroupMessage,
     clearGroupChat,
     toggleGroupMessagePin,
+    toggleGroupMessageReaction,
     markGroupMessagesRead,
     markGroupNotificationsRead,
   } = useApp();
@@ -176,6 +177,13 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
     if (message.trim()) localStorage.setItem(key, message);
     else localStorage.removeItem(key);
   }, [currentUserDraftId, groupDraftId, message]);
+
+  useEffect(() => {
+    const field = composerRef.current;
+    if (!field) return;
+    field.style.height = "auto";
+    field.style.height = `${Math.min(field.scrollHeight, 144)}px`;
+  }, [message]);
 
   useLayoutEffect(() => {
     const scrollToBottom = () => {
@@ -352,8 +360,8 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
                   onPointerCancel={() => { swipeRef.current = null; }}
                 >
                   <div
-                    className={`max-w-[82%] rounded-lg px-3 py-2 shadow-soft transition-smooth ${
-                      mine ? "bg-primary text-primary-foreground" : "bg-card text-card-foreground"
+                    className={`chat-bubble max-w-[82%] rounded-lg px-3 py-2 ${
+                      mine ? "bg-emerald-700 text-white dark:bg-emerald-500 dark:text-emerald-950" : "bg-card text-card-foreground"
                     } ${highlightedMessageId === item.id ? "ring-2 ring-accent" : ""}`}
                     style={{ touchAction: "pan-y" }}
                     onClick={() => {
@@ -370,15 +378,16 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
                           showMessage(repliedTo.id);
                         }}
                         className={`mb-2 w-full rounded border-l-2 px-2 py-1 text-left text-xs ${
-                          mine ? "border-primary-foreground/60 bg-primary-foreground/10" : "border-primary bg-primary-soft"
+                          mine ? "border-white/60 bg-white/10 dark:border-emerald-950/60 dark:bg-emerald-950/10" : "border-primary bg-primary-soft"
                         }`}
                       >
                         <span className="block truncate font-black">{repliedSender?.username ?? "Unknown"}</span>
                         <span className="block truncate opacity-80">{repliedTo.content}</span>
                       </button>
                     )}
-                    <p className="whitespace-pre-wrap break-words text-sm">{item.content}</p>
-                    <div className={`mt-1 flex items-center justify-end gap-1.5 text-[10px] ${mine ? "text-primary-foreground/75" : "text-muted-foreground"}`}>
+                    <LinkifiedText text={item.content} />
+                    <ReactionSummary reactions={item.reactions} />
+                    <div className={`mt-1 flex items-center justify-end gap-1.5 text-[10px] ${mine ? "text-white/80 dark:text-emerald-950/75" : "text-muted-foreground"}`}>
                       {pinned && <Pin className="size-3" />}
                       <span>{formatClockTime24(item.createdAt)}</span>
                       <button
@@ -444,7 +453,7 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
             onChange={(event) => setMessage(event.target.value)}
             placeholder="Message"
             rows={1}
-            className="max-h-32 min-h-11 resize-none bg-card py-2.5"
+            className="max-h-36 min-h-11 resize-none overflow-y-auto bg-card py-2.5"
           />
           <Button
             type="submit"
@@ -479,6 +488,10 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
           setActionMessageId(null);
         }}
         onPin={togglePin}
+        onReact={(item, reaction) => {
+          const result = toggleGroupMessageReaction(item.id, reaction);
+          if (!result.ok) toast.error(result.error);
+        }}
         onEdit={startEditing}
         onDelete={removeMessage}
         onInfo={(item) => {
@@ -487,7 +500,7 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
         }}
       />
       <Dialog open={Boolean(editingMessage)} onOpenChange={(open) => !open && setEditingMessageId(null)}>
-        <DialogContent className="rounded-lg">
+        <DialogContent className="max-h-[90dvh] w-[calc(100vw-2rem)] max-w-lg overflow-x-hidden overflow-y-auto rounded-lg">
           <DialogHeader><DialogTitle>Edit message</DialogTitle></DialogHeader>
           <form onSubmit={saveEditedMessage} className="space-y-3">
             <Textarea value={editingContent} onChange={(event) => setEditingContent(event.target.value)} className="min-h-28 bg-background" />
@@ -724,12 +737,12 @@ const MessageInfoDialog = ({
 
   return (
     <Dialog open={Boolean(message)} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90dvh] overflow-y-auto rounded-lg">
+      <DialogContent className="max-h-[90dvh] w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)] overflow-x-hidden overflow-y-auto rounded-lg sm:max-w-lg">
         <DialogHeader><DialogTitle>Message info</DialogTitle></DialogHeader>
         {message && (
           <div className="space-y-4">
             <div className="rounded-lg bg-primary-soft p-3 text-sm">
-              <p className="whitespace-pre-wrap break-words font-medium">{message.content}</p>
+              <p className="whitespace-pre-wrap break-all font-medium leading-relaxed">{message.content}</p>
               <p className="mt-1 text-[10px] font-bold text-muted-foreground">{formatClockTime24(message.createdAt)}</p>
             </div>
             <ReceiptSection title="Seen by" users={seenMembers} detail="Seen" />
@@ -749,6 +762,7 @@ const MessageActionsDialog = ({
   onOpenChange,
   onReply,
   onPin,
+  onReact,
   onEdit,
   onDelete,
   onInfo,
@@ -759,17 +773,25 @@ const MessageActionsDialog = ({
   onOpenChange: (open: boolean) => void;
   onReply: (message: GroupMessage) => void;
   onPin: (message: GroupMessage) => void;
+  onReact: (message: GroupMessage, reaction: string) => void;
   onEdit: (message: GroupMessage) => void;
   onDelete: (message: GroupMessage) => void;
   onInfo: (message: GroupMessage) => void;
 }) => (
   <Dialog open={Boolean(message)} onOpenChange={onOpenChange}>
-    <DialogContent className="rounded-lg">
+    <DialogContent className="max-h-[90dvh] w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)] overflow-x-hidden overflow-y-auto rounded-lg sm:max-w-md">
       <DialogHeader><DialogTitle>Message options</DialogTitle></DialogHeader>
       {message && (
         <div className="space-y-3">
-          <div className="rounded-lg bg-primary-soft p-3 text-sm">
-            <p className="line-clamp-3 whitespace-pre-wrap break-words font-medium">{message.content}</p>
+          <div className="w-full min-w-0 rounded-lg bg-primary-soft p-3 text-sm">
+            <p className="min-w-0 whitespace-pre-wrap break-all font-medium leading-relaxed">{message.content}</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {REACTIONS.map((reaction) => (
+              <Button key={reaction} type="button" variant="outline" size="sm" className="h-9 px-3 text-base" onClick={() => onReact(message, reaction)}>
+                <SmilePlus className="mr-1 size-3.5" /> {reaction}
+              </Button>
+            ))}
           </div>
           <div className="grid grid-cols-2 gap-2">
             <Button type="button" variant="outline" onClick={() => onReply(message)}>
@@ -816,6 +838,45 @@ const UnreadBadge = ({ count }: { count: number }) => {
     <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-primary text-[10px] font-black text-primary-foreground shadow-sm">
       {count > 9 ? "9+" : count}
     </span>
+  );
+};
+
+const REACTIONS = ["👍", "❤️", "😂", "🔥", "👏"];
+
+const ReactionSummary = ({ reactions }: { reactions?: Record<string, string> }) => {
+  const counts = Object.values(reactions ?? {}).reduce<Record<string, number>>((acc, reaction) => {
+    acc[reaction] = (acc[reaction] ?? 0) + 1;
+    return acc;
+  }, {});
+  const entries = Object.entries(counts);
+  if (!entries.length) return null;
+  return (
+    <div className="mt-2 flex flex-wrap gap-1">
+      {entries.map(([reaction, count]) => (
+        <span key={reaction} className="rounded-full bg-background/80 px-2 py-0.5 text-[11px] font-bold text-foreground shadow-sm">
+          {reaction} {count}
+        </span>
+      ))}
+    </div>
+  );
+};
+
+const urlPattern = /(https?:\/\/[^\s<]+|www\.[^\s<]+)/gi;
+
+const LinkifiedText = ({ text }: { text: string }) => {
+  const parts = text.split(urlPattern);
+  return (
+    <p className="chat-bubble-text whitespace-pre-wrap text-sm">
+      {parts.map((part, index) => {
+        if (!part.match(urlPattern)) return <span key={`${part}-${index}`}>{part}</span>;
+        const href = part.startsWith("http") ? part : `https://${part}`;
+        return (
+          <a key={`${part}-${index}`} href={href} target="_blank" rel="noreferrer" className="font-bold underline underline-offset-2" onClick={(event) => event.stopPropagation()}>
+            {part}
+          </a>
+        );
+      })}
+    </p>
   );
 };
 

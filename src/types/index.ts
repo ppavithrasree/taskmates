@@ -27,10 +27,20 @@ export interface Post {
   content: string;
   visibility?: Visibility;
   customUsernames?: string[];
+  reactions?: Record<string, string>;
+  comments?: PostComment[];
   createdAt: number;
   updatedAt: number;
   deletedAt?: number;
   dirty?: boolean;
+}
+
+export interface PostComment {
+  id: string;
+  userId: string;
+  content: string;
+  createdAt: number;
+  updatedAt: number;
 }
 
 export interface Connection {
@@ -59,6 +69,7 @@ export interface GroupMessage {
   content: string;
   replyToMessageId?: string;
   pinnedBy?: string[];
+  reactions?: Record<string, string>;
   deliveredTo?: string[];
   readBy?: string[];
   createdAt: number;

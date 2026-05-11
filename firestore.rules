@@ -16,7 +16,11 @@ service cloud.firestore {
       allow read: if request.auth != null;
       allow create: if request.auth != null
         && request.resource.data.userId == request.auth.uid;
-      allow update, delete: if request.auth != null
+      allow update: if request.auth != null
+        && resource.data.userId == request.auth.uid;
+      allow update: if request.auth != null
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["reactions", "comments", "updatedAt"]);
+      allow delete: if request.auth != null
         && resource.data.userId == request.auth.uid;
     }
 
@@ -61,7 +65,7 @@ service cloud.firestore {
           (
             exists(/databases/$(database)/documents/groups/$(resource.data.groupId))
             && request.auth.uid in get(/databases/$(database)/documents/groups/$(resource.data.groupId)).data.memberIds
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["deliveredTo", "readBy", "pinnedBy", "updatedAt"])
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["deliveredTo", "readBy", "pinnedBy", "reactions", "updatedAt"])
           )
         );
       allow delete: if request.auth != null

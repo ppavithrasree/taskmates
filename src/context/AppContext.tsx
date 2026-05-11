@@ -1,6 +1,6 @@
 import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import type { AppNotification, AppState, AuthResult, Connection, Group, GroupMessage, Post, SyncCollection, SyncOperation, User, Visibility } from "@/types";
+import type { AppNotification, AppState, AuthResult, Connection, Group, GroupMessage, Post, PostComment, SyncCollection, SyncOperation, User, Visibility } from "@/types";
 import {
   firebaseChangePassword,
   firebaseCreateAccount,
@@ -53,6 +53,7 @@ interface AppContextValue {
   deleteGroupMessage: (messageId: string) => AuthResult;
   clearGroupChat: (groupId: string) => AuthResult;
   toggleGroupMessagePin: (messageId: string) => AuthResult;
+  toggleGroupMessageReaction: (messageId: string, reaction: string) => AuthResult;
   markGroupMessagesRead: (groupId: string) => void;
   markGroupNotificationsRead: (groupId: string) => void;
   markNotificationsForLinkRead: (link: string) => void;
@@ -61,6 +62,9 @@ interface AppContextValue {
   addPost: (input: { startTime: number; endTime: number; content: string; visibility?: Visibility; customUsernames?: string[] }) => AuthResult;
   updatePost: (id: string, patch: Partial<Pick<Post, "startTime" | "endTime" | "content" | "visibility" | "customUsernames">>) => AuthResult;
   deletePost: (id: string) => void;
+  togglePostReaction: (postId: string, reaction: string) => AuthResult;
+  addPostComment: (postId: string, content: string) => AuthResult;
+  deletePostComment: (postId: string, commentId: string) => AuthResult;
   updateUserSettings: (patch: Partial<Pick<User, "privacy" | "customUsernames" | "retentionDays" | "notificationsEnabled">>) => void;
   updateTheme: (theme: "light" | "dark") => void;
   runRetentionCleanup: () => void;
@@ -232,6 +236,7 @@ const mergeGroupMessages = (local: GroupMessage[], remote: GroupMessage[]) => {
     map.set(item.id, {
       ...existing,
       pinnedBy: existing.pinnedBy ?? item.pinnedBy,
+      reactions: item.updatedAt >= existing.updatedAt ? (item.reactions ?? existing.reactions) : (existing.reactions ?? item.reactions),
       deliveredTo: mergeIds(existing.deliveredTo, item.deliveredTo),
       readBy: mergeIds(existing.readBy, item.readBy),
       updatedAt: Math.max(existing.updatedAt, item.updatedAt),
@@ -988,6 +993,24 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     return { ok: true };
   };
 
+  const toggleGroupMessageReaction: AppContextValue["toggleGroupMessageReaction"] = (messageId, reaction) => {
+    if (!currentUser) return { ok: false, error: "Sign in first." };
+    const message = state.groupMessages.find((item) => item.id === messageId);
+    if (!message) return { ok: false, error: "Message not found." };
+    const group = state.groups.find((item) => item.id === message.groupId);
+    if (!group?.memberIds.includes(currentUser.id)) return { ok: false, error: "Group not found." };
+    const reactions = { ...(message.reactions ?? {}) };
+    if (reactions[currentUser.id] === reaction) delete reactions[currentUser.id];
+    else reactions[currentUser.id] = reaction;
+    const updated = { ...message, reactions, updatedAt: Date.now(), dirty: true };
+    setState((snapshot) => ({
+      ...snapshot,
+      groupMessages: snapshot.groupMessages.map((item) => item.id === messageId ? updated : item),
+    }));
+    commitOperation(queueFor("groupMessages", "upsert", updated.id, updated));
+    return { ok: true };
+  };
+
   const markGroupMessagesRead: AppContextValue["markGroupMessagesRead"] = (groupId) => {
     if (!currentUser) return;
     const group = state.groups.find((item) => item.id === groupId);
@@ -1078,7 +1101,8 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
 
   const addPost: AppContextValue["addPost"] = (input) => {
     if (!currentUser) return { ok: false, error: "Sign in first." };
-    if (input.startTime > Date.now() || input.endTime > Date.now()) return { ok: false, error: "Future activity cannot be posted." };
+    const maxFutureTime = Date.now() + 5 * 60_000;
+    if (input.startTime > maxFutureTime || input.endTime > maxFutureTime) return { ok: false, error: "Future activity can only include the next 5 minutes." };
     if (!isValidPostRange(input.startTime, input.endTime)) return { ok: false, error: "Posts must cover at least 5 minutes." };
     if (!input.content.trim()) return { ok: false, error: "Add what happened during this time." };
     const post: Post = { id: uid("p"), userId: currentUser.id, startTime: input.startTime, endTime: input.endTime, content: input.content.trim(), visibility: input.visibility, customUsernames: input.customUsernames, createdAt: Date.now(), updatedAt: Date.now(), dirty: true };
@@ -1092,7 +1116,8 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     const existing = state.posts.find((post) => post.id === id);
     if (!existing || existing.userId !== currentUser?.id) return { ok: false, error: "Post not found." };
     const next = { ...existing, ...patch, content: patch.content?.trim() ?? existing.content, updatedAt: Date.now(), dirty: true };
-    if (next.startTime > Date.now() || next.endTime > Date.now()) return { ok: false, error: "Future activity cannot be posted." };
+    const maxFutureTime = Date.now() + 5 * 60_000;
+    if (next.startTime > maxFutureTime || next.endTime > maxFutureTime) return { ok: false, error: "Future activity can only include the next 5 minutes." };
     if (!isValidPostRange(next.startTime, next.endTime)) return { ok: false, error: "Posts must cover at least 5 minutes." };
     if (!next.content) return { ok: false, error: "Add what happened during this time." };
     const operation = queueFor("posts", "upsert", next.id, next);
@@ -1108,6 +1133,54 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       posts: snapshot.posts.filter((post) => !(post.id === id && post.userId === currentUser?.id)),
     }));
     commitOperation(queueFor("posts", "delete", id));
+  };
+
+  const togglePostReaction: AppContextValue["togglePostReaction"] = (postId, reaction) => {
+    if (!currentUser) return { ok: false, error: "Sign in first." };
+    const post = state.posts.find((item) => item.id === postId);
+    if (!post) return { ok: false, error: "Post not found." };
+    const reactions = { ...(post.reactions ?? {}) };
+    if (reactions[currentUser.id] === reaction) delete reactions[currentUser.id];
+    else reactions[currentUser.id] = reaction;
+    const updated = { ...post, reactions, updatedAt: Date.now(), dirty: true };
+    setState((snapshot) => ({
+      ...snapshot,
+      posts: snapshot.posts.map((item) => item.id === postId ? updated : item),
+    }));
+    commitOperation(queueFor("posts", "upsert", updated.id, updated));
+    return { ok: true };
+  };
+
+  const addPostComment: AppContextValue["addPostComment"] = (postId, content) => {
+    if (!currentUser) return { ok: false, error: "Sign in first." };
+    const post = state.posts.find((item) => item.id === postId);
+    if (!post) return { ok: false, error: "Post not found." };
+    const clean = content.trim();
+    if (!clean) return { ok: false, error: "Type a comment first." };
+    const now = Date.now();
+    const comment: PostComment = { id: uid("pc"), userId: currentUser.id, content: clean, createdAt: now, updatedAt: now };
+    const updated = { ...post, comments: [...(post.comments ?? []), comment], updatedAt: now, dirty: true };
+    setState((snapshot) => ({
+      ...snapshot,
+      posts: snapshot.posts.map((item) => item.id === postId ? updated : item),
+    }));
+    commitOperation(queueFor("posts", "upsert", updated.id, updated));
+    return { ok: true };
+  };
+
+  const deletePostComment: AppContextValue["deletePostComment"] = (postId, commentId) => {
+    if (!currentUser) return { ok: false, error: "Sign in first." };
+    const post = state.posts.find((item) => item.id === postId);
+    if (!post) return { ok: false, error: "Post not found." };
+    const comment = (post.comments ?? []).find((item) => item.id === commentId);
+    if (!comment || (comment.userId !== currentUser.id && post.userId !== currentUser.id)) return { ok: false, error: "Comment not found." };
+    const updated = { ...post, comments: (post.comments ?? []).filter((item) => item.id !== commentId), updatedAt: Date.now(), dirty: true };
+    setState((snapshot) => ({
+      ...snapshot,
+      posts: snapshot.posts.map((item) => item.id === postId ? updated : item),
+    }));
+    commitOperation(queueFor("posts", "upsert", updated.id, updated));
+    return { ok: true };
   };
 
   const updateUserSettings: AppContextValue["updateUserSettings"] = (patch) => {
@@ -1222,6 +1295,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     deleteGroupMessage,
     clearGroupChat,
     toggleGroupMessagePin,
+    toggleGroupMessageReaction,
     markGroupMessagesRead,
     markGroupNotificationsRead,
     markNotificationsForLinkRead,
@@ -1230,6 +1304,9 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     addPost,
     updatePost,
     deletePost,
+    togglePostReaction,
+    addPostComment,
+    deletePostComment,
     updateUserSettings,
     updateTheme,
     runRetentionCleanup,
