@@ -18,6 +18,7 @@ import { requestNotificationPermission, scheduleDailyMidnightNotification, showL
 import { initFCMPush, sendFCMPush } from "@/lib/pushNotifications";
 import {
   cacheGroupKey,
+  clearCachedGroupKey,
   decryptGroupKeyForUser,
   decryptMessageContent,
   decryptWrappedKeyForUser,
@@ -227,6 +228,12 @@ const mergeByFreshness = <T extends { id: string; updatedAt: number; dirty?: boo
   return [...map.values()];
 };
 
+const remoteWithPendingLocal = <T extends { id: string; dirty?: boolean }>(local: T[], remote: T[]) => {
+  const remoteMap = new Map(remote.map((item) => [item.id, item]));
+  const dirtyLocal = local.filter((item) => item.dirty && !remoteMap.has(item.id));
+  return [...remote, ...dirtyLocal.map((item) => ({ ...item }))];
+};
+
 const mergeIds = (a?: string[], b?: string[]) => [...new Set([...(a ?? []), ...(b ?? [])])];
 
 const mergeGroupMessages = (local: GroupMessage[], remote: GroupMessage[]) => {
@@ -388,7 +395,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     if (!hasFirebaseConfig || !currentUserId) return;
     return subscribeFirebaseState(currentUserId, (remote) => {
       setState((snapshot) => {
-        let nextPosts = remote.posts ? mergeByFreshness(snapshot.posts, remote.posts) : snapshot.posts;
+        let nextPosts = remote.posts ? remoteWithPendingLocal(snapshot.posts, remote.posts) : snapshot.posts;
         nextPosts = nextPosts.filter((p) => !p.deletedAt);
 
         // For connections, use Firebase as source of truth:
@@ -408,7 +415,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         const currentRemoteUser = remote.users?.find((user) => user.id === currentUserId) ?? snapshot.users.find((user) => user.id === currentUserId);
         const notificationCutoff = Date.now() - (currentRemoteUser?.retentionDays ?? 15) * 86_400_000;
         let nextNotifications = remote.notifications
-          ? mergeByFreshness(snapshot.notifications, remote.notifications)
+          ? remoteWithPendingLocal(snapshot.notifications, remote.notifications)
           : snapshot.notifications;
         nextNotifications = nextNotifications.filter(
           (n) => n.recipientId === currentUserId && n.createdAt > notificationCutoff
@@ -425,10 +432,10 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
 
         return {
           ...snapshot,
-          users: remote.users ? mergeByFreshness(snapshot.users, remote.users) : snapshot.users,
+          users: remote.users ? remoteWithPendingLocal(snapshot.users, remote.users) : snapshot.users,
           posts: nextPosts,
           connections: nextConnections,
-          groups: remote.groups ? mergeByFreshness(snapshot.groups, remote.groups) : snapshot.groups,
+          groups: remote.groups ? remoteWithPendingLocal(snapshot.groups, remote.groups) : snapshot.groups,
           groupMessages: nextGroupMessages,
           notifications: nextNotifications,
         };
@@ -1392,6 +1399,43 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     if (!currentUser) return;
     let cancelled = false;
     void (async () => {
+      for (const group of visibleGroups) {
+        if (cancelled) return;
+        const hasLegacyMessages = state.groupMessages.some(
+          (message) => message.groupId === group.id && message.encrypted && !message.encryptedKeys
+        );
+        if (!hasLegacyMessages) continue;
+
+        let groupKey = getCachedGroupKey(currentUser.id, group.id);
+        if (!groupKey) {
+          groupKey = await decryptGroupKeyForUser(currentUser.id, group.id, group.encryptedKeys?.[currentUser.id]).catch(() => null);
+        }
+        if (!groupKey) continue;
+
+        const members = group.memberIds
+          .map((id) => state.users.find((user) => user.id === id))
+          .filter(Boolean) as User[];
+        const encryptedKeys = await encryptedKeysForMembers(members, groupKey, group.encryptedKeys);
+        if (cancelled) return;
+        if (JSON.stringify(encryptedKeys) === JSON.stringify(group.encryptedKeys ?? {})) continue;
+
+        const updatedGroup = { ...group, encryptedKeys, encryptionVersion: 1, updatedAt: Date.now(), dirty: true };
+        setState((snapshot) => ({
+          ...snapshot,
+          groups: snapshot.groups.map((item) => item.id === group.id ? updatedGroup : item),
+        }));
+        commitOperation(queueFor("groups", "upsert", updatedGroup.id, updatedGroup));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUser, visibleGroups, state.users, state.groupMessages, commitOperation]);
+
+  useEffect(() => {
+    if (!currentUser) return;
+    let cancelled = false;
+    void (async () => {
       const next: Record<string, string> = {};
       for (const message of state.groupMessages) {
         if (!message.encrypted) {
@@ -1405,12 +1449,24 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         const group = state.groups.find((item) => item.id === message.groupId);
         if (!group?.memberIds.includes(currentUser.id)) continue;
         try {
-          const messageKey = message.encryptedKeys?.[currentUser.id]
-            ? await decryptWrappedKeyForUser(currentUser.id, message.encryptedKeys[currentUser.id])
-            : await decryptGroupKeyForUser(currentUser.id, group.id, group.encryptedKeys?.[currentUser.id]);
-          next[message.id] = messageKey
-            ? await decryptMessageContent(messageKey, message.iv, message.ciphertext)
-            : "Encrypted message. Waiting for recipient key.";
+          const usesLegacyGroupKey = !message.encryptedKeys?.[currentUser.id];
+          const messageKey = usesLegacyGroupKey
+            ? await decryptGroupKeyForUser(currentUser.id, group.id, group.encryptedKeys?.[currentUser.id])
+            : await decryptWrappedKeyForUser(currentUser.id, message.encryptedKeys[currentUser.id]);
+          if (!messageKey) {
+            next[message.id] = "Encrypted message. Waiting for recipient key.";
+            continue;
+          }
+          try {
+            next[message.id] = await decryptMessageContent(messageKey, message.iv, message.ciphertext);
+          } catch (error) {
+            if (!usesLegacyGroupKey || !group.encryptedKeys?.[currentUser.id]) throw error;
+            clearCachedGroupKey(currentUser.id, group.id);
+            const refreshedKey = await decryptGroupKeyForUser(currentUser.id, group.id, group.encryptedKeys[currentUser.id]);
+            next[message.id] = refreshedKey
+              ? await decryptMessageContent(refreshedKey, message.iv, message.ciphertext)
+              : "Encrypted message. Waiting for recipient key.";
+          }
         } catch {
           next[message.id] = "Encrypted message could not be decrypted.";
         }

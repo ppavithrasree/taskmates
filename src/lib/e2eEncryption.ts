@@ -82,6 +82,10 @@ export const cacheGroupKey = (userId: string, groupId: string, groupKey: string)
   localStorage.setItem(groupKeyCacheKey(userId, groupId), groupKey);
 };
 
+export const clearCachedGroupKey = (userId: string, groupId: string) => {
+  localStorage.removeItem(groupKeyCacheKey(userId, groupId));
+};
+
 export const encryptGroupKeyForUser = async (recipientPublicKey: string, groupKey: string) => {
   const recipientKey = await importPublicIdentityKey(JSON.parse(recipientPublicKey) as JsonWebKey);
   const ephemeralPair = await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, true, ["deriveKey"]);
