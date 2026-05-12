@@ -17,6 +17,7 @@ type PushModule = {
   PushNotifications: {
     requestPermissions: () => Promise<{ receive: string }>;
     register: () => Promise<void>;
+    removeAllDeliveredNotifications: () => Promise<void>;
     addListener: (event: string, cb: (data: unknown) => void) => Promise<{ remove: () => void }>;
   };
 };
@@ -25,9 +26,33 @@ let pushModule: PushModule | null = null;
 let activePath = "/";
 let initializedUserId: string | null = null;
 let listenerHandles: { remove: () => void }[] = [];
+let navigationHandler: ((path: string) => void) | null = null;
 
 export const setActivePushPath = (pathname: string) => {
   activePath = pathname;
+};
+
+export const setPushNotificationNavigationHandler = (handler: ((path: string) => void) | null) => {
+  navigationHandler = handler;
+};
+
+export const pathForNotification = (data?: { type?: string; link?: string } | null) => {
+  if (!data) return "/dashboard";
+  if (data.type === "group_message" && data.link?.startsWith("/groups/")) return data.link;
+  if (data.type === "connection_request" || data.type === "connection_accepted") return "/friends";
+  if (data.type === "unlogged_gaps") return "/dashboard";
+  return data.link || "/dashboard";
+};
+
+export const clearDeliveredPushNotifications = async () => {
+  const mod = await loadPush();
+  if (!mod) return;
+  await mod.PushNotifications.removeAllDeliveredNotifications().catch(() => undefined);
+};
+
+const navigateFromNotificationData = (data?: { type?: string; link?: string } | null) => {
+  navigationHandler?.(pathForNotification(data));
+  void clearDeliveredPushNotifications();
 };
 
 const loadPush = async (): Promise<PushModule | null> => {
@@ -47,7 +72,7 @@ const loadPush = async (): Promise<PushModule | null> => {
  */
 export const initFCMPush = async (
   userId: string,
-  onForegroundPush?: (title: string, body: string) => void
+  onForegroundPush?: (title: string, body: string, data?: { type?: string; link?: string }) => void
 ): Promise<void> => {
   const mod = await loadPush();
   if (!mod) return;
@@ -117,13 +142,14 @@ export const initFCMPush = async (
       const n = notif as { title?: string; body?: string; data?: { type?: string; link?: string } };
       if (n.data?.type === "group_message" && n.data.link === activePath) return;
       if (n.title && n.body && onForegroundPush) {
-        onForegroundPush(n.title, n.body);
+        onForegroundPush(n.title, n.body, n.data);
       }
     }));
 
     // Push tapped (app was in background/closed)
-    listenerHandles.push(await mod.PushNotifications.addListener("pushNotificationActionPerformed", () => {
-      // App opens naturally — the notification page handles it
+    listenerHandles.push(await mod.PushNotifications.addListener("pushNotificationActionPerformed", (action: unknown) => {
+      const notification = (action as { notification?: { data?: { type?: string; link?: string } } })?.notification;
+      navigateFromNotificationData(notification?.data);
     }));
   } catch (err) {
     initializedUserId = null;

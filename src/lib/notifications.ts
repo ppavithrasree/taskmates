@@ -50,8 +50,18 @@ export const requestNotificationPermission = async (): Promise<boolean> => {
   return false;
 };
 
+export const clearDeliveredLocalNotifications = async () => {
+  if (!Capacitor.isNativePlatform()) return;
+  await LocalNotifications.removeAllDeliveredNotifications().catch(() => undefined);
+};
+
 /** Show a native notification immediately with sound + vibration */
-export const showLocalNotification = async (title: string, body: string, id?: number) => {
+export const showLocalNotification = async (
+  title: string,
+  body: string,
+  id?: number,
+  extra?: { type?: string; link?: string }
+) => {
   const notifId = id ?? NOTIFICATION_BASE_ID + Math.floor(Math.random() * 90000);
 
   if (Capacitor.isNativePlatform()) {
@@ -81,7 +91,7 @@ export const showLocalNotification = async (title: string, body: string, id?: nu
             largeIcon: "ic_launcher",
             iconColor: "#0f9aa2",
             schedule: { at: new Date(Date.now() + 1000), allowWhileIdle: true },
-            extra: null,
+            extra: extra ?? null,
           },
         ],
       });
@@ -125,6 +135,7 @@ export const scheduleDailyMidnightNotification = async (enabled: boolean, body?:
           channelId: CHANNEL_ID,
           smallIcon: "ic_stat_icon_config_sample",
           iconColor: "#0f9aa2",
+          extra: { type: "unlogged_gaps", link: "/dashboard" },
           schedule: {
             at: next,
             allowWhileIdle: true,

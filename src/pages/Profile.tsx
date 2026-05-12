@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 
 const Profile = () => {
   const { username } = useParams();
-  const { currentUser, users, posts, changePassword, getAcceptedConnectionIds } = useApp();
+  const { currentUser, users, posts, changePassword, getAcceptedConnectionIds, presenceByUserId } = useApp();
   const [password, setPassword] = useState("");
   const target = currentUser ? (username ? users.find((user) => user.username === username.toLowerCase()) : currentUser) : undefined;
   const isOwn = Boolean(currentUser && target?.id === currentUser.id);
@@ -49,6 +49,11 @@ const Profile = () => {
             <div className="min-w-0">
               <h1 className="truncate text-2xl font-black">{target.username}</h1>
               <p className="truncate text-sm text-muted-foreground">{target.email}</p>
+              {!isOwn && (
+                <p className={`mt-1 text-sm ${presenceByUserId[target.id]?.active ? "font-bold text-success" : "text-muted-foreground"}`}>
+                  {formatPresence(presenceByUserId[target.id])}
+                </p>
+              )}
               <div className="mt-3 flex flex-wrap gap-2 text-xs font-bold">
                 <span className="rounded-full bg-primary-soft px-2 py-1 text-primary">{stats.total} saved posts</span>
                 <span className="rounded-full bg-success-soft px-2 py-1 text-success">Saved for {target.retentionDays} days</span>
@@ -95,3 +100,14 @@ const Info = ({ icon: Icon, label, value }: { icon: typeof Timer; label: string;
 );
 
 export default Profile;
+
+const formatPresence = (status?: { active?: boolean; lastSeen?: number }) => {
+  if (status?.active) return "Active";
+  if (!status?.lastSeen) return "Last seen unavailable";
+  return `Last seen ${new Date(status.lastSeen).toLocaleString(undefined, {
+    day: "2-digit",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  })}`;
+};

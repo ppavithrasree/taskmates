@@ -12,10 +12,11 @@ import { Progress } from "@/components/ui/progress";
 import type { Post, User } from "@/types";
 
 const Dashboard = () => {
-  const { currentUser, users, posts, visibleFeedPosts, markNotificationsForLinkRead } = useApp();
+  const { currentUser, users, posts, visibleFeedPosts, markNotificationsForLinkRead, presenceByUserId } = useApp();
   const [open, setOpen] = useState(false);
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const logHistoryRef = useRef(false);
+  const selectedUserHistoryRef = useRef(false);
   const myPosts = useMemo(
     () => currentUser ? posts.filter((post) => post.userId === currentUser.id && !post.deletedAt) : [],
     [currentUser, posts]
@@ -50,6 +51,11 @@ const Dashboard = () => {
 
   useEffect(() => {
     const onPopState = () => {
+      if (selectedUserHistoryRef.current) {
+        selectedUserHistoryRef.current = false;
+        setSelectedUserId(null);
+        return;
+      }
       if (!logHistoryRef.current) return;
       logHistoryRef.current = false;
       setOpen(false);
@@ -65,6 +71,24 @@ const Dashboard = () => {
       window.history.back();
     }
     setOpen(false);
+  };
+
+  const openUserFeed = (userId: string) => {
+    if (!selectedUserHistoryRef.current) {
+      window.history.pushState({ ...window.history.state, taskmatesFeedUser: userId }, "", window.location.href);
+      selectedUserHistoryRef.current = true;
+    }
+    setSelectedUserId(userId);
+  };
+
+  const closeUserFeed = () => {
+    if (selectedUserHistoryRef.current) {
+      selectedUserHistoryRef.current = false;
+      window.history.back();
+      setSelectedUserId(null);
+      return;
+    }
+    setSelectedUserId(null);
   };
 
   if (!currentUser) return null;
@@ -96,7 +120,7 @@ const Dashboard = () => {
           {selectedUser ? (
             <>
               <div className="flex items-center gap-3">
-                <Button size="icon" variant="ghost" onClick={() => setSelectedUserId(null)} aria-label="Back to feed">
+                <Button size="icon" variant="ghost" onClick={closeUserFeed} aria-label="Back to feed">
                   <ArrowLeft className="size-4" />
                 </Button>
                 <div className="min-w-0">
@@ -132,7 +156,8 @@ const Dashboard = () => {
                     key={post.userId}
                     post={post}
                     author={users.find((user) => user.id === post.userId)}
-                    onOpen={() => setSelectedUserId(post.userId)}
+                    presence={presenceByUserId[post.userId]}
+                    onOpen={() => openUserFeed(post.userId)}
                   />
                 ))
               )}
@@ -155,7 +180,7 @@ const Empty = ({ text }: { text: string }) => (
   <div className="rounded-lg border border-dashed border-border bg-card p-8 text-center text-sm text-muted-foreground">{text}</div>
 );
 
-const LatestUserPost = ({ post, author, onOpen }: { post: Post; author?: User; onOpen: () => void }) => (
+const LatestUserPost = ({ post, author, presence, onOpen }: { post: Post; author?: User; presence?: { active?: boolean; lastSeen?: number }; onOpen: () => void }) => (
   <button
     type="button"
     onClick={onOpen}
@@ -168,7 +193,7 @@ const LatestUserPost = ({ post, author, onOpen }: { post: Post; author?: User; o
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="truncate text-sm font-black">{author?.username ?? "unknown"}</p>
-          <p className="truncate text-xs text-muted-foreground">Latest activity</p>
+          <p className={`truncate text-xs ${presence?.active ? "font-bold text-success" : "text-muted-foreground"}`}>{formatPresence(presence)}</p>
         </div>
         <span className="shrink-0 text-xs font-bold text-muted-foreground">{formatDayLabel(startOfLocalDay(post.startTime))}</span>
       </div>
@@ -181,6 +206,17 @@ const LatestUserPost = ({ post, author, onOpen }: { post: Post; author?: User; o
     </div>
   </button>
 );
+
+const formatPresence = (status?: { active?: boolean; lastSeen?: number }) => {
+  if (status?.active) return "Active";
+  if (!status?.lastSeen) return "Last seen unavailable";
+  return `Last seen ${new Date(status.lastSeen).toLocaleString(undefined, {
+    day: "2-digit",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  })}`;
+};
 
 const groupPostsByDay = (posts: Post[]) => {
   const map = new Map<number, Post[]>();

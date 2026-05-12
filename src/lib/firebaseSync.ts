@@ -118,6 +118,7 @@ const cleanPayload = (payload: unknown) => {
   const record = { ...(payload as Record<string, unknown>) };
   delete record.dirty;
   delete record.passwordHash;
+  if (record.encrypted === true) record.content = "";
   return stripUndefined(record) as Record<string, unknown>;
 };
 
@@ -147,6 +148,7 @@ export const pushSyncOperation = async (operation: SyncOperation) => {
 };
 
 export const subscribeFirebaseState = (
+  currentUserId: string,
   onData: (data: {
     users?: User[];
     posts?: Post[];
@@ -162,8 +164,14 @@ export const subscribeFirebaseState = (
 
   getServices().then(async (services) => {
     if (!services || closed) return;
-    const { collection, onSnapshot } = await import("firebase/firestore");
+    const { collection, onSnapshot, query, where } = await import("firebase/firestore");
     if (closed) return;
+    let sentConnections: Connection[] = [];
+    let receivedConnections: Connection[] = [];
+    const emitConnections = () => {
+      const byId = new Map([...sentConnections, ...receivedConnections].map((item) => [item.id, item]));
+      onData({ connections: [...byId.values()] });
+    };
     unsubs = [
       onSnapshot(collection(services.db, "users"), (snapshot) => {
         onData({ users: snapshot.docs.map((item) => normalizeEntity<User>(item.id, item.data())) });
@@ -171,16 +179,21 @@ export const subscribeFirebaseState = (
       onSnapshot(collection(services.db, "posts"), (snapshot) => {
         onData({ posts: snapshot.docs.map((item) => normalizeEntity<Post>(item.id, item.data())) });
       }, () => undefined),
-      onSnapshot(collection(services.db, "connections"), (snapshot) => {
-        onData({ connections: snapshot.docs.map((item) => normalizeEntity<Connection>(item.id, item.data())) });
+      onSnapshot(query(collection(services.db, "connections"), where("senderId", "==", currentUserId)), (snapshot) => {
+        sentConnections = snapshot.docs.map((item) => normalizeEntity<Connection>(item.id, item.data()));
+        emitConnections();
       }, () => undefined),
-      onSnapshot(collection(services.db, "groups"), (snapshot) => {
+      onSnapshot(query(collection(services.db, "connections"), where("receiverId", "==", currentUserId)), (snapshot) => {
+        receivedConnections = snapshot.docs.map((item) => normalizeEntity<Connection>(item.id, item.data()));
+        emitConnections();
+      }, () => undefined),
+      onSnapshot(query(collection(services.db, "groups"), where("memberIds", "array-contains", currentUserId)), (snapshot) => {
         onData({ groups: snapshot.docs.map((item) => normalizeEntity<Group>(item.id, item.data())) });
       }, () => undefined),
-      onSnapshot(collection(services.db, "groupMessages"), (snapshot) => {
+      onSnapshot(query(collection(services.db, "groupMessages"), where("recipientIds", "array-contains", currentUserId)), (snapshot) => {
         onData({ groupMessages: snapshot.docs.map((item) => normalizeEntity<GroupMessage>(item.id, item.data())) });
       }, () => undefined),
-      onSnapshot(collection(services.db, "notifications"), (snapshot) => {
+      onSnapshot(query(collection(services.db, "notifications"), where("recipientId", "==", currentUserId)), (snapshot) => {
         onData({ notifications: snapshot.docs.map((item) => normalizeEntity<AppNotification>(item.id, item.data())) });
       }, () => undefined),
     ];

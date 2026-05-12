@@ -7,7 +7,8 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AppProvider } from "@/context/AppContext";
-import { setActivePushPath } from "@/lib/pushNotifications";
+import { clearDeliveredLocalNotifications } from "@/lib/notifications";
+import { clearDeliveredPushNotifications, pathForNotification, setActivePushPath, setPushNotificationNavigationHandler } from "@/lib/pushNotifications";
 import Index from "./pages/Index.tsx";
 import AuthPage from "./pages/AuthPage.tsx";
 import Dashboard from "./pages/Dashboard.tsx";
@@ -47,6 +48,11 @@ const BackRouteController = () => {
   }, [location.pathname]);
 
   useEffect(() => {
+    setPushNotificationNavigationHandler((path) => navigate(path || "/dashboard"));
+    return () => setPushNotificationNavigationHandler(null);
+  }, [navigate]);
+
+  useEffect(() => {
     const onPopState = () => {
       if (document.querySelector('[role="dialog"]')) return;
       const target = backTargetFor(pathRef.current);
@@ -75,6 +81,11 @@ const BackRouteController = () => {
           return;
         }
 
+        if (window.history.state?.taskmatesFeedUser) {
+          window.history.back();
+          return;
+        }
+
         if (pathname === "/dashboard" || pathname === "/") {
           const now = Date.now();
           if (now - lastExitPromptRef.current < 2000) {
@@ -98,6 +109,42 @@ const BackRouteController = () => {
     });
 
     return () => remove?.();
+  }, [navigate]);
+
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+    let removeAppState: (() => void) | undefined;
+    let removeLocalAction: (() => void) | undefined;
+
+    const clearDelivered = () => {
+      void clearDeliveredPushNotifications();
+      void clearDeliveredLocalNotifications();
+    };
+
+    clearDelivered();
+
+    import("@capacitor/app").then(({ App }) => {
+      App.addListener("appStateChange", ({ isActive }) => {
+        if (isActive) clearDelivered();
+      }).then((handle) => {
+        removeAppState = () => handle.remove();
+      });
+    });
+
+    import("@capacitor/local-notifications").then(({ LocalNotifications }) => {
+      LocalNotifications.addListener("localNotificationActionPerformed", (action) => {
+        const extra = action.notification.extra as { type?: string; link?: string } | undefined;
+        navigate(pathForNotification(extra));
+        clearDelivered();
+      }).then((handle) => {
+        removeLocalAction = () => handle.remove();
+      });
+    });
+
+    return () => {
+      removeAppState?.();
+      removeLocalAction?.();
+    };
   }, [navigate]);
 
   return null;

@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
 const Friends = () => {
-  const { currentUser, users, connections, searchUsers, sendRequest, respondRequest, deleteConnection, getAcceptedConnectionIds, getConnectionStatus, markNotificationsForLinkRead } = useApp();
+  const { currentUser, users, connections, searchUsers, sendRequest, respondRequest, deleteConnection, getAcceptedConnectionIds, getConnectionStatus, markNotificationsForLinkRead, presenceByUserId } = useApp();
   const [query, setQuery] = useState("");
   const results = useMemo(() => searchUsers(query), [query, searchUsers]);
 
@@ -54,6 +54,7 @@ const Friends = () => {
                       username={user.username}
                       status={status}
                       mutualCount={mutualCount}
+                      presence={presenceByUserId[user.id]}
                       action={
                         status === "none" ? (
                           <Button size="sm" onClick={() => request(user.id)}>
@@ -82,6 +83,7 @@ const Friends = () => {
                   key={connection.id}
                   username={sender.username}
                   status="incoming"
+                  presence={presenceByUserId[sender.id]}
                   action={
                     <div className="flex gap-1">
                       <Button size="icon" variant="outline" onClick={() => respondRequest(connection.id, true)}>
@@ -110,6 +112,7 @@ const Friends = () => {
                 key={user.id}
                 username={user.username}
                 status="connected"
+                presence={presenceByUserId[user.id]}
                 action={
                   <Button size="sm" variant="destructive" onClick={() => removeConnection(user.id)}>
                     <Trash2 className="mr-1 size-4" /> Remove
@@ -136,11 +139,13 @@ const PersonRow = ({
   username,
   status,
   mutualCount = 0,
+  presence,
   action,
 }: {
   username: string;
   status: keyof typeof statusMeta;
   mutualCount?: number;
+  presence?: { active?: boolean; lastSeen?: number };
   action?: ReactNode;
 }) => {
   const meta = statusMeta[status];
@@ -156,13 +161,24 @@ const PersonRow = ({
           <p className="truncate font-bold">{username}</p>
           <div className="flex items-center gap-1 text-xs text-muted-foreground">
             <Icon className={`size-3 ${meta.tone}`} />
-            <span>{status === "none" ? `${mutualCount} mutual${mutualCount === 1 ? "" : "s"}` : meta.label}</span>
+            <span>{status === "connected" ? formatPresence(presence) : status === "none" ? `${mutualCount} mutual${mutualCount === 1 ? "" : "s"}` : meta.label}</span>
           </div>
         </div>
       </Link>
       {action}
     </div>
   );
+};
+
+const formatPresence = (status?: { active?: boolean; lastSeen?: number }) => {
+  if (status?.active) return "Active";
+  if (!status?.lastSeen) return "Last seen unavailable";
+  return `Last seen ${new Date(status.lastSeen).toLocaleString(undefined, {
+    day: "2-digit",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  })}`;
 };
 
 export default Friends;

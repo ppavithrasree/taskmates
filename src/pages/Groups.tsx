@@ -126,6 +126,9 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
     toggleGroupMessageReaction,
     markGroupMessagesRead,
     markGroupNotificationsRead,
+    presenceByUserId,
+    typingByGroupId,
+    emitTyping,
   } = useApp();
   const [message, setMessage] = useState("");
   const [replyToMessageId, setReplyToMessageId] = useState<string | null>(null);
@@ -145,6 +148,11 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
   const isMember = Boolean(currentUser && group?.memberIds.includes(currentUser.id));
   const currentUserDraftId = currentUser?.id;
   const groupDraftId = group?.id;
+  const userById = useMemo(() => new Map(users.map((user) => [user.id, user])), [users]);
+  const members = useMemo(
+    () => group ? group.memberIds.map((id) => userById.get(id)).filter(Boolean) as User[] : [],
+    [group, userById]
+  );
 
   const messages = useMemo(
     () => groupMessages.filter((item) => item.groupId === groupId).sort((a, b) => a.createdAt - b.createdAt),
@@ -158,6 +166,10 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
     () => messages.filter((item) => (item.pinnedBy ?? []).includes(currentUser?.id ?? "")).sort((a, b) => b.updatedAt - a.updatedAt),
     [messages, currentUser?.id]
   );
+  const onlineCount = members.filter((member) => presenceByUserId[member.id]?.active).length;
+  const typingUsers = (typingByGroupId[groupId] ?? [])
+    .map((id) => userById.get(id)?.username)
+    .filter(Boolean) as string[];
 
   useEffect(() => {
     if (!currentUser || !group || !isMember) return;
@@ -185,6 +197,18 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
     field.style.height = `${Math.min(field.scrollHeight, 144)}px`;
   }, [message]);
 
+  useEffect(() => {
+    if (!groupId) return;
+    if (message.trim()) {
+      emitTyping(groupId, true);
+      const timer = window.setTimeout(() => emitTyping(groupId, false), 1600);
+      return () => window.clearTimeout(timer);
+    }
+    emitTyping(groupId, false);
+  }, [groupId, message, emitTyping]);
+
+  useEffect(() => () => emitTyping(groupId, false), [groupId, emitTyping]);
+
   useLayoutEffect(() => {
     const scrollToBottom = () => {
       const list = messagesRef.current;
@@ -203,9 +227,6 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
 
   if (!currentUser) return null;
   if (!group || !isMember) return <Navigate to="/groups" replace />;
-
-  const members = group.memberIds.map((id) => users.find((user) => user.id === id)).filter(Boolean) as User[];
-  const userById = new Map(users.map((user) => [user.id, user]));
 
   const focusReply = (item: GroupMessage) => {
     setReplyToMessageId(item.id);
@@ -234,10 +255,10 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
     setActionMessageId(null);
   };
 
-  const saveEditedMessage = (event: FormEvent) => {
+  const saveEditedMessage = async (event: FormEvent) => {
     event.preventDefault();
     if (!editingMessage) return;
-    const result = updateGroupMessage(editingMessage.id, editingContent);
+    const result = await updateGroupMessage(editingMessage.id, editingContent);
     if (!result.ok) {
       toast.error(result.error);
       return;
@@ -267,9 +288,10 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
     setClearChatOpen(false);
   };
 
-  const sendMessage = (event: FormEvent) => {
+  const sendMessage = async (event: FormEvent) => {
     event.preventDefault();
-    const result = addGroupMessage(group.id, message, replyToMessage?.id);
+    emitTyping(group.id, false);
+    const result = await addGroupMessage(group.id, message, replyToMessage?.id);
     if (!result.ok) {
       toast.error(result.error);
       return;
@@ -293,7 +315,9 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
           <GroupAvatar name={group.name} />
           <Link to={`/groups/${group.id}/info`} className="min-w-0 flex-1 text-left">
             <h1 className="truncate text-lg font-black">{group.name}</h1>
-            <p className="truncate text-xs text-muted-foreground">{members.map((member) => member.username).join(", ")}</p>
+            <p className={`truncate text-xs ${typingUsers.length ? "font-bold text-success" : "text-muted-foreground"}`}>
+              {typingUsers.length ? `${typingUsers.join(", ")} typing...` : `${onlineCount} users online`}
+            </p>
           </Link>
           <Button asChild size="icon" variant="ghost" aria-label="Group info">
             <Link to={`/groups/${group.id}/info`}><Info className="size-4" /></Link>
@@ -543,6 +567,7 @@ const GroupInfo = ({ groupId }: { groupId: string }) => {
     toggleMuteGroup,
     isGroupMuted,
     getAcceptedConnectionIds,
+    presenceByUserId,
   } = useApp();
   const navigate = useNavigate();
   const [editingName, setEditingName] = useState(false);
@@ -649,8 +674,8 @@ const GroupInfo = ({ groupId }: { groupId: string }) => {
           {members.map((member) => (
             <PersonRow
               key={member.id}
-              username={member.username}
-              detail={member.id === currentUser.id ? "You" : "Member"}
+              username={`${member.username}${member.id === currentUser.id ? " (you)" : ""}`}
+              detail={formatPresence(presenceByUserId[member.id])}
               action={
                 <Button size="sm" variant="outline" onClick={() => removeMember(member.id)}>
                   <Trash2 className="mr-1 size-4" /> Remove
@@ -831,6 +856,17 @@ const ReceiptSection = ({ title, users, detail }: { title: string; users: User[]
     )}
   </section>
 );
+
+const formatPresence = (status?: { active?: boolean; lastSeen?: number }) => {
+  if (status?.active) return "Active";
+  if (!status?.lastSeen) return "Last seen unavailable";
+  return `Last seen ${new Date(status.lastSeen).toLocaleString(undefined, {
+    day: "2-digit",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  })}`;
+};
 
 const UnreadBadge = ({ count }: { count: number }) => {
   if (count <= 0) return null;
