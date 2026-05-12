@@ -101,7 +101,13 @@ export const decryptGroupKeyForUser = async (userId: string, groupId: string, en
   const cached = getCachedGroupKey(userId, groupId);
   if (cached) return cached;
   if (!encryptedKey) return null;
+  const groupKey = await decryptWrappedKeyForUser(userId, encryptedKey);
+  if (groupKey) cacheGroupKey(userId, groupId, groupKey);
+  return groupKey;
+};
 
+export const decryptWrappedKeyForUser = async (userId: string, encryptedKey?: string) => {
+  if (!encryptedKey) return null;
   const identityRaw = localStorage.getItem(`${IDENTITY_PREFIX}${userId}`);
   if (!identityRaw) return null;
   const identity = JSON.parse(identityRaw) as StoredIdentity;
@@ -114,9 +120,7 @@ export const decryptGroupKeyForUser = async (userId: string, groupId: string, en
     wrappingKey,
     base64ToBytes(payload.ciphertext)
   );
-  const groupKey = decoder.decode(decrypted);
-  cacheGroupKey(userId, groupId, groupKey);
-  return groupKey;
+  return decoder.decode(decrypted);
 };
 
 export const encryptMessageContent = async (groupKey: string, content: string) => {

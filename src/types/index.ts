@@ -74,6 +74,7 @@ export interface GroupMessage {
   encryptionVersion?: number;
   ciphertext?: string;
   iv?: string;
+  encryptedKeys?: Record<string, string>;
   recipientIds?: string[];
   replyToMessageId?: string;
   pinnedBy?: string[];

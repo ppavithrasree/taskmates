@@ -20,6 +20,7 @@ import {
   cacheGroupKey,
   decryptGroupKeyForUser,
   decryptMessageContent,
+  decryptWrappedKeyForUser,
   encryptedKeysForMembers,
   encryptMessageContent,
   ensureEncryptionIdentity,
@@ -247,6 +248,7 @@ const mergeGroupMessages = (local: GroupMessage[], remote: GroupMessage[]) => {
       existing.content === item.content &&
       existing.ciphertext === item.ciphertext &&
       existing.iv === item.iv &&
+      JSON.stringify(existing.encryptedKeys ?? {}) === JSON.stringify(item.encryptedKeys ?? {}) &&
       existing.replyToMessageId === item.replyToMessageId &&
       existing.createdAt === item.createdAt;
 
@@ -306,12 +308,14 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   );
 
   useEffect(() => {
-    if (!currentUser || currentUser.publicKey) return;
+    if (!currentUser) return;
     let cancelled = false;
     void (async () => {
       const identity = await ensureEncryptionIdentity(currentUser.id);
       if (cancelled) return;
-      const updated = { ...currentUser, publicKey: publicKeyString(identity), updatedAt: Date.now() };
+      const publicKey = publicKeyString(identity);
+      if (currentUser.publicKey === publicKey) return;
+      const updated = { ...currentUser, publicKey, updatedAt: Date.now() };
       setState((snapshot) => ({
         ...snapshot,
         users: snapshot.users.map((user) => user.id === currentUser.id ? updated : user),
@@ -944,6 +948,9 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       groupKey = await decryptGroupKeyForUser(currentUser.id, group.id, group.encryptedKeys?.[currentUser.id]).catch(() => null);
     }
     if (!groupKey) {
+      const hasWrappedKeys = Object.keys(group.encryptedKeys ?? {}).length > 0;
+      const hasExistingMessages = state.groupMessages.some((message) => message.groupId === group.id);
+      if (group.encryptionVersion === 1 || hasWrappedKeys || hasExistingMessages) return null;
       groupKey = generateGroupKey();
       cacheGroupKey(currentUser.id, group.id, groupKey);
     }
@@ -976,9 +983,16 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     if (!group || !group.memberIds.includes(currentUser.id)) return { ok: false, error: "Group not found." };
     const clean = content.trim();
     if (!clean) return { ok: false, error: "Type a message first." };
-    const encryption = await ensureGroupEncryption(group);
-    if (!encryption) return { ok: false, error: "Encryption is not ready." };
-    const encrypted = await encryptMessageContent(encryption.groupKey, clean);
+    const identity = await ensureEncryptionIdentity(currentUser.id);
+    const currentPublicKey = publicKeyString(identity);
+    const members = group.memberIds
+      .map((id) => state.users.find((user) => user.id === id))
+      .filter(Boolean)
+      .map((user) => user.id === currentUser.id ? { ...user, publicKey: currentPublicKey } : user) as User[];
+    const messageKey = generateGroupKey();
+    const encryptedKeys = await encryptedKeysForMembers(members, messageKey);
+    if (!encryptedKeys[currentUser.id]) return { ok: false, error: "Encryption is not ready." };
+    const encrypted = await encryptMessageContent(messageKey, clean);
     const replyingTo = replyToMessageId
       ? state.groupMessages.find((item) => item.id === replyToMessageId && item.groupId === groupId)
       : undefined;
@@ -990,9 +1004,10 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       senderId: currentUser.id,
       content: "",
       encrypted: true,
-      encryptionVersion: 1,
+      encryptionVersion: 2,
       ciphertext: encrypted.ciphertext,
       iv: encrypted.iv,
+      encryptedKeys,
       recipientIds: group.memberIds,
       replyToMessageId: replyingTo?.id,
       deliveredTo: [currentUser.id],
@@ -1001,7 +1016,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       updatedAt: now,
       dirty: true,
     };
-    const updatedGroup = { ...encryption.group, updatedAt: now, dirty: true };
+    const updatedGroup = { ...group, updatedAt: now, dirty: true };
     setState((snapshot) => ({
       ...snapshot,
       groupMessages: [...snapshot.groupMessages, message],
@@ -1038,17 +1053,25 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     const clean = content.trim();
     if (!clean) return { ok: false, error: "Type a message first." };
     if (clean === (decryptedMessages[message.id] ?? message.content)) return { ok: false, error: "Use different text." };
-    const encryption = await ensureGroupEncryption(group);
-    if (!encryption) return { ok: false, error: "Encryption is not ready." };
-    const encrypted = await encryptMessageContent(encryption.groupKey, clean);
+    const identity = await ensureEncryptionIdentity(currentUser.id);
+    const currentPublicKey = publicKeyString(identity);
+    const members = group.memberIds
+      .map((id) => state.users.find((user) => user.id === id))
+      .filter(Boolean)
+      .map((user) => user.id === currentUser.id ? { ...user, publicKey: currentPublicKey } : user) as User[];
+    const messageKey = generateGroupKey();
+    const encryptedKeys = await encryptedKeysForMembers(members, messageKey);
+    if (!encryptedKeys[currentUser.id]) return { ok: false, error: "Encryption is not ready." };
+    const encrypted = await encryptMessageContent(messageKey, clean);
 
     const updated = {
       ...message,
       content: "",
       encrypted: true,
-      encryptionVersion: 1,
+      encryptionVersion: 2,
       ciphertext: encrypted.ciphertext,
       iv: encrypted.iv,
+      encryptedKeys,
       recipientIds: group.memberIds,
       updatedAt: Date.now(),
       dirty: true,
@@ -1382,10 +1405,12 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         const group = state.groups.find((item) => item.id === message.groupId);
         if (!group?.memberIds.includes(currentUser.id)) continue;
         try {
-          const groupKey = await decryptGroupKeyForUser(currentUser.id, group.id, group.encryptedKeys?.[currentUser.id]);
-          next[message.id] = groupKey
-            ? await decryptMessageContent(groupKey, message.iv, message.ciphertext)
-            : "Encrypted message. Open the chat after another member updates keys.";
+          const messageKey = message.encryptedKeys?.[currentUser.id]
+            ? await decryptWrappedKeyForUser(currentUser.id, message.encryptedKeys[currentUser.id])
+            : await decryptGroupKeyForUser(currentUser.id, group.id, group.encryptedKeys?.[currentUser.id]);
+          next[message.id] = messageKey
+            ? await decryptMessageContent(messageKey, message.iv, message.ciphertext)
+            : "Encrypted message. Waiting for recipient key.";
         } catch {
           next[message.id] = "Encrypted message could not be decrypted.";
         }
@@ -1414,9 +1439,12 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     };
   }, [currentUser, state.groupMessages, state.groups]);
 
+  const presenceUserId = currentUser?.id;
+  const presenceUsername = currentUser?.username;
+
   useEffect(() => {
-    if (!currentUser) return;
-    return connectPresence(currentUser, visibleGroups, {
+    if (!presenceUserId || !presenceUsername) return;
+    return connectPresence({ id: presenceUserId, username: presenceUsername } as User, [], {
       onPresence: (items) => {
         setPresenceByUserId((current) => {
           const next = { ...current };
@@ -1425,10 +1453,10 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         });
       },
       onTyping: (groupId, userIds) => {
-        setTypingByGroupId((current) => ({ ...current, [groupId]: userIds.filter((id) => id !== currentUser.id) }));
+        setTypingByGroupId((current) => ({ ...current, [groupId]: userIds.filter((id) => id !== presenceUserId) }));
       },
     });
-  }, [currentUser, visibleGroups]);
+  }, [presenceUserId, presenceUsername]);
 
   useEffect(() => {
     updatePresenceGroups(visibleGroups);

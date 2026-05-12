@@ -143,6 +143,7 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
   const messageRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const swipeRef = useRef<{ id: string; x: number; y: number } | null>(null);
   const suppressSelectRef = useRef(false);
+  const typingRef = useRef<{ groupId?: string; active: boolean; timer?: number }>({ active: false });
 
   const group = groups.find((item) => item.id === groupId);
   const isMember = Boolean(currentUser && group?.memberIds.includes(currentUser.id));
@@ -200,14 +201,37 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
   useEffect(() => {
     if (!groupId) return;
     if (message.trim()) {
-      emitTyping(groupId, true);
-      const timer = window.setTimeout(() => emitTyping(groupId, false), 1600);
-      return () => window.clearTimeout(timer);
+      if (!typingRef.current.active || typingRef.current.groupId !== groupId) {
+        if (typingRef.current.active && typingRef.current.groupId) emitTyping(typingRef.current.groupId, false);
+        emitTyping(groupId, true);
+        typingRef.current.active = true;
+        typingRef.current.groupId = groupId;
+      }
+      if (typingRef.current.timer) window.clearTimeout(typingRef.current.timer);
+      const timer = window.setTimeout(() => {
+        emitTyping(groupId, false);
+        typingRef.current.active = false;
+        typingRef.current.groupId = groupId;
+        typingRef.current.timer = undefined;
+      }, 1800);
+      typingRef.current.timer = timer;
+      return () => {
+        window.clearTimeout(timer);
+      };
     }
-    emitTyping(groupId, false);
+    if (typingRef.current.active) {
+      emitTyping(typingRef.current.groupId ?? groupId, false);
+      typingRef.current.active = false;
+      typingRef.current.groupId = groupId;
+    }
   }, [groupId, message, emitTyping]);
 
-  useEffect(() => () => emitTyping(groupId, false), [groupId, emitTyping]);
+  useEffect(() => () => {
+    if (typingRef.current.timer) window.clearTimeout(typingRef.current.timer);
+    if (typingRef.current.active) emitTyping(typingRef.current.groupId ?? groupId, false);
+    typingRef.current.active = false;
+    typingRef.current.timer = undefined;
+  }, [groupId, emitTyping]);
 
   useLayoutEffect(() => {
     const scrollToBottom = () => {
@@ -384,9 +408,8 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
                   onPointerCancel={() => { swipeRef.current = null; }}
                 >
                   <div
-                    className={`chat-bubble max-w-[82%] rounded-lg px-3 py-2 ${
-                      mine ? "bg-emerald-700 text-white dark:bg-emerald-500 dark:text-emerald-950" : "bg-card text-card-foreground"
-                    } ${highlightedMessageId === item.id ? "ring-2 ring-accent" : ""}`}
+                    className={`chat-bubble max-w-[82%] rounded-lg px-3 py-2 ${mine ? "bg-emerald-700 text-white dark:bg-emerald-500 dark:text-emerald-950" : "bg-card text-card-foreground"
+                      } ${highlightedMessageId === item.id ? "ring-2 ring-accent" : ""}`}
                     style={{ touchAction: "pan-y" }}
                     onClick={() => {
                       if (suppressSelectRef.current) return;
@@ -401,9 +424,8 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
                           event.stopPropagation();
                           showMessage(repliedTo.id);
                         }}
-                        className={`mb-2 w-full rounded border-l-2 px-2 py-1 text-left text-xs ${
-                          mine ? "border-white/60 bg-white/10 dark:border-emerald-950/60 dark:bg-emerald-950/10" : "border-primary bg-primary-soft"
-                        }`}
+                        className={`mb-2 w-full rounded border-l-2 px-2 py-1 text-left text-xs ${mine ? "border-white/60 bg-white/10 dark:border-emerald-950/60 dark:bg-emerald-950/10" : "border-primary bg-primary-soft"
+                          }`}
                       >
                         <span className="block truncate font-black">{repliedSender?.username ?? "Unknown"}</span>
                         <span className="block truncate opacity-80">{repliedTo.content}</span>
@@ -471,27 +493,27 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
             </div>
           )}
           <div className="flex items-end gap-2">
-          <Textarea
-            ref={composerRef}
-            value={message}
-            onChange={(event) => setMessage(event.target.value)}
-            placeholder="Message"
-            rows={1}
-            className="max-h-36 min-h-11 resize-none overflow-y-auto bg-card py-2.5"
-          />
-          <Button
-            type="submit"
-            size="icon"
-            className="h-11 w-11 shrink-0"
-            onMouseDown={(event) => event.preventDefault()}
-            onTouchStart={(event) => event.preventDefault()}
-            onTouchEnd={(event) => {
-              event.preventDefault();
-              event.currentTarget.form?.requestSubmit();
-            }}
-          >
-            <Send className="size-4" />
-          </Button>
+            <Textarea
+              ref={composerRef}
+              value={message}
+              onChange={(event) => setMessage(event.target.value)}
+              placeholder="Message"
+              rows={1}
+              className="max-h-36 min-h-11 resize-none overflow-y-auto bg-card py-2.5"
+            />
+            <Button
+              type="submit"
+              size="icon"
+              className="h-11 w-11 shrink-0"
+              onMouseDown={(event) => event.preventDefault()}
+              onTouchStart={(event) => event.preventDefault()}
+              onTouchEnd={(event) => {
+                event.preventDefault();
+                event.currentTarget.form?.requestSubmit();
+              }}
+            >
+              <Send className="size-4" />
+            </Button>
           </div>
         </form>
       </div>
@@ -938,14 +960,12 @@ const MemberPicker = ({
           key={user.id}
           type="button"
           onClick={() => onToggle(user.id)}
-          className={`flex w-full items-center justify-between gap-3 rounded-lg border p-3 text-left shadow-soft transition-smooth ${
-            selectedIds.includes(user.id) ? "border-primary bg-primary-soft" : "border-border bg-card"
-          }`}
+          className={`flex w-full items-center justify-between gap-3 rounded-lg border p-3 text-left shadow-soft transition-smooth ${selectedIds.includes(user.id) ? "border-primary bg-primary-soft" : "border-border bg-card"
+            }`}
         >
           <PersonIdentity username={user.username} detail="Connection" />
-          <span className={`flex size-5 items-center justify-center rounded border text-xs font-black ${
-            selectedIds.includes(user.id) ? "border-primary bg-primary text-primary-foreground" : "border-border"
-          }`}>
+          <span className={`flex size-5 items-center justify-center rounded border text-xs font-black ${selectedIds.includes(user.id) ? "border-primary bg-primary text-primary-foreground" : "border-border"
+            }`}>
             {selectedIds.includes(user.id) ? <Check className="size-3" /> : null}
           </span>
         </button>

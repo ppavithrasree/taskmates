@@ -30,6 +30,34 @@ const io = new Server(server, {
 const users = new Map();
 const socketUsers = new Map();
 const groupTyping = new Map();
+const typingTimers = new Map();
+
+const typingKey = (groupId, userId) => `${groupId}:${userId}`;
+
+const emitTyping = (groupId) => {
+  const typingUsers = groupTyping.get(groupId);
+  io.to(`group:${groupId}`).emit("typing:update", { groupId, userIds: typingUsers ? [...typingUsers] : [] });
+};
+
+const stopTyping = (groupId, userId) => {
+  const key = typingKey(groupId, userId);
+  const timer = typingTimers.get(key);
+  if (timer) clearTimeout(timer);
+  typingTimers.delete(key);
+
+  const typingUsers = groupTyping.get(groupId);
+  if (!typingUsers) return;
+  if (!typingUsers.delete(userId)) return;
+  if (typingUsers.size === 0) groupTyping.delete(groupId);
+  emitTyping(groupId);
+};
+
+const refreshTypingTimeout = (groupId, userId) => {
+  const key = typingKey(groupId, userId);
+  const existing = typingTimers.get(key);
+  if (existing) clearTimeout(existing);
+  typingTimers.set(key, setTimeout(() => stopTyping(groupId, userId), 3500));
+};
 
 const statusFor = (userId) => {
   const item = users.get(userId);
@@ -48,8 +76,11 @@ const broadcastPresence = (userId) => {
 const cleanupTyping = (socket, userId) => {
   for (const [groupId, typingUsers] of groupTyping.entries()) {
     if (!typingUsers.delete(userId)) continue;
-    io.to(`group:${groupId}`).emit("typing:update", { groupId, userIds: [...typingUsers] });
+    const timer = typingTimers.get(typingKey(groupId, userId));
+    if (timer) clearTimeout(timer);
+    typingTimers.delete(typingKey(groupId, userId));
     if (typingUsers.size === 0) groupTyping.delete(groupId);
+    emitTyping(groupId);
   }
 };
 
@@ -91,18 +122,16 @@ io.on("connection", (socket) => {
   socket.on("typing:start", ({ groupId }) => {
     if (typeof groupId !== "string") return;
     const typingUsers = groupTyping.get(groupId) || new Set();
+    const wasTyping = typingUsers.has(userId);
     typingUsers.add(userId);
     groupTyping.set(groupId, typingUsers);
-    socket.to(`group:${groupId}`).emit("typing:update", { groupId, userIds: [...typingUsers] });
+    refreshTypingTimeout(groupId, userId);
+    if (!wasTyping) emitTyping(groupId);
   });
 
   socket.on("typing:stop", ({ groupId }) => {
     if (typeof groupId !== "string") return;
-    const typingUsers = groupTyping.get(groupId);
-    if (!typingUsers) return;
-    typingUsers.delete(userId);
-    io.to(`group:${groupId}`).emit("typing:update", { groupId, userIds: [...typingUsers] });
-    if (typingUsers.size === 0) groupTyping.delete(groupId);
+    stopTyping(groupId, userId);
   });
 
   socket.on("disconnect", () => {
