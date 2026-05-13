@@ -88,7 +88,9 @@ export const PostCard = ({ post }: { post: Post }) => {
   };
 
   return (
-    <article className="tap-lift animate-fade-in-up rounded-lg border border-border bg-card p-4 shadow-soft">
+    <article className="tap-lift animate-fade-in-up overflow-hidden rounded-lg border border-border bg-card shadow-soft">
+      <div className="h-1 bg-gradient-primary" />
+      <div className="p-4">
       <header className="mb-4 flex items-start justify-between gap-3">
         <Link to={author ? `/profile/${author.username}` : "#"} className="flex min-w-0 items-center gap-3">
           <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-gradient-primary font-bold text-primary-foreground">
@@ -117,13 +119,13 @@ export const PostCard = ({ post }: { post: Post }) => {
             type="button"
             size="sm"
             variant={liked ? "default" : "outline"}
-            className="h-9"
+            className={liked ? "h-9 bg-gradient-primary shadow-glow" : "h-9 border-primary/40 text-primary"}
             onClick={() => {
               const result = togglePostLike(post.id);
               if (!result.ok) toast.error(result.error);
             }}
           >
-            <Heart className="mr-1 size-4" /> {liked ? "Liked" : "Like"}
+            <Heart className={liked ? "mr-1 size-4 fill-current" : "mr-1 size-4"} /> {liked ? "Liked" : "Like"}
           </Button>
           <button type="button" className="text-xs font-bold text-primary underline-offset-2 hover:underline" onClick={() => setLikesOpen(true)}>
             {(post.likes ?? []).length} likes
@@ -146,7 +148,7 @@ export const PostCard = ({ post }: { post: Post }) => {
               const canDelete = currentUser?.id === item.userId || currentUser?.id === post.userId;
               const canEdit = currentUser?.id === item.userId;
               return (
-                <div key={item.id} className="rounded-lg bg-muted/70 px-3 py-2 text-sm">
+                <div key={item.id} className="rounded-lg border border-primary/10 bg-gradient-soft px-3 py-2 text-sm dark:border-primary/15">
                   <div className="mb-1 flex items-center justify-between gap-2">
                     <Link to={commenter ? `/profile/${commenter.username}` : "#"} className="truncate text-xs font-black text-primary">
                       {commenter?.username ?? "unknown"}
@@ -286,6 +288,7 @@ export const PostCard = ({ post }: { post: Post }) => {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      </div>
     </article>
   );
 };

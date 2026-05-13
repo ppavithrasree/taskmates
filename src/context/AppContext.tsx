@@ -285,15 +285,15 @@ const mergePosts = (local: Post[], remote: Post[]) => {
     }
     map.set(item.id, {
       ...existing,
-      likes: existing.dirty
-        ? existing.likes
+      likes: item.updatedAt >= existing.updatedAt
+        ? (item.likes ?? existing.likes)
         : sameIds(existing.likes, item.likes)
         ? existing.likes
         : mergeIds(existing.likes, item.likes),
       reactions: item.updatedAt >= existing.updatedAt ? (item.reactions ?? existing.reactions) : (existing.reactions ?? item.reactions),
-      comments: mergeComments(existing.comments, item.comments),
+      comments: item.updatedAt >= existing.updatedAt ? (item.comments ?? []) : mergeComments(existing.comments, item.comments),
       updatedAt: Math.max(existing.updatedAt, item.updatedAt),
-      dirty: existing.dirty,
+      dirty: item.updatedAt >= existing.updatedAt ? false : existing.dirty,
     });
   }
   return [...map.values()];
@@ -1360,7 +1360,14 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     if (next.startTime > maxFutureTime || next.endTime > maxFutureTime) return { ok: false, error: "Future activity can only include the next 5 minutes." };
     if (!isValidPostRange(next.startTime, next.endTime)) return { ok: false, error: "Posts must cover at least 5 minutes." };
     if (!next.content) return { ok: false, error: "Add what happened during this time." };
-    const operation = queueFor("posts", "upsert", next.id, next);
+    const operation = queueFor("posts", "upsert", next.id, {
+      startTime: next.startTime,
+      endTime: next.endTime,
+      content: next.content,
+      visibility: next.visibility,
+      customUsernames: next.customUsernames,
+      updatedAt: next.updatedAt,
+    });
     setState((snapshot) => ({ ...snapshot, posts: snapshot.posts.map((post) => post.id === id ? next : post) }));
     commitOperation(operation);
     return { ok: true };
@@ -1386,7 +1393,12 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       ...snapshot,
       posts: snapshot.posts.map((item) => item.id === postId ? updated : item),
     }));
-    commitOperation(queueFor("posts", "upsert", updated.id, updated));
+    commitOperation(queueFor("posts", "upsert", updated.id, {
+      __op: "like",
+      userId: currentUser.id,
+      liked: !liked,
+      updatedAt: updated.updatedAt,
+    }));
     if (!liked && post.userId !== currentUser.id) {
       createNotification(
         post.userId,
@@ -1412,7 +1424,11 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       ...snapshot,
       posts: snapshot.posts.map((item) => item.id === postId ? updated : item),
     }));
-    commitOperation(queueFor("posts", "upsert", updated.id, updated));
+    commitOperation(queueFor("posts", "upsert", updated.id, {
+      __op: "addComment",
+      comment,
+      updatedAt: now,
+    }));
     if (post.userId !== currentUser.id) {
       createNotification(
         post.userId,
@@ -1443,7 +1459,10 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       ...snapshot,
       posts: snapshot.posts.map((item) => item.id === postId ? updated : item),
     }));
-    commitOperation(queueFor("posts", "upsert", updated.id, updated));
+    commitOperation(queueFor("posts", "upsert", updated.id, {
+      comments: updated.comments,
+      updatedAt: updated.updatedAt,
+    }));
     return { ok: true };
   };
 
@@ -1458,7 +1477,10 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       ...snapshot,
       posts: snapshot.posts.map((item) => item.id === postId ? updated : item),
     }));
-    commitOperation(queueFor("posts", "upsert", updated.id, updated));
+    commitOperation(queueFor("posts", "upsert", updated.id, {
+      comments: updated.comments,
+      updatedAt: updated.updatedAt,
+    }));
     return { ok: true };
   };
 

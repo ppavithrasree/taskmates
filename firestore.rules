@@ -19,7 +19,7 @@ service cloud.firestore {
       allow update: if request.auth != null
         && resource.data.userId == request.auth.uid;
       allow update: if request.auth != null
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["reactions", "comments", "updatedAt"]);
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["likes", "reactions", "comments", "updatedAt"]);
       allow delete: if request.auth != null
         && resource.data.userId == request.auth.uid;
     }

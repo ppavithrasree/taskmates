@@ -116,6 +116,7 @@ const stripUndefined = (value: unknown): unknown => {
 
 const cleanPayload = (payload: unknown) => {
   const record = { ...(payload as Record<string, unknown>) };
+  delete record.__op;
   delete record.dirty;
   delete record.passwordHash;
   return stripUndefined(record) as Record<string, unknown>;
@@ -133,15 +134,38 @@ const normalizeEntity = <T extends { id: string; updatedAt?: number }>(
 export const pushSyncOperation = async (operation: SyncOperation) => {
   const services = await getServices();
   if (!services || !navigator.onLine || !services.auth.currentUser) return false;
-  const { deleteDoc, doc, setDoc } = await import("firebase/firestore");
+  const { arrayRemove, arrayUnion, deleteDoc, doc, setDoc, updateDoc } = await import("firebase/firestore");
 
   if (operation.type === "delete") {
     await deleteDoc(doc(services.db, operation.collection, operation.entityId));
     return true;
   }
 
-  const payload = cleanPayload(operation.payload);
-  await setDoc(doc(services.db, operation.collection, operation.entityId), payload, { merge: true });
+  const payload = operation.payload as Record<string, unknown> | undefined;
+  if (operation.collection === "posts" && payload?.__op === "like") {
+    const postRef = doc(services.db, "posts", operation.entityId);
+    const userId = String(payload.userId ?? "");
+    if (!userId) return false;
+    await updateDoc(postRef, {
+      likes: payload.liked ? arrayUnion(userId) : arrayRemove(userId),
+      updatedAt: payload.updatedAt,
+    });
+    return true;
+  }
+
+  if (operation.collection === "posts" && payload?.__op === "addComment") {
+    const postRef = doc(services.db, "posts", operation.entityId);
+    const comment = payload.comment;
+    if (!comment || typeof comment !== "object") return false;
+    await updateDoc(postRef, {
+      comments: arrayUnion(comment),
+      updatedAt: payload.updatedAt,
+    });
+    return true;
+  }
+
+  const cleanedPayload = cleanPayload(operation.payload);
+  await setDoc(doc(services.db, operation.collection, operation.entityId), cleanedPayload, { merge: true });
 
   return true;
 };
