@@ -5,14 +5,14 @@ import { PostCard } from "@/features/posts/PostCard";
 import { PostForm } from "@/features/posts/PostForm";
 import { useApp } from "@/context/AppContext";
 import { activityStats, startOfLocalDay } from "@/lib/timeCoverage";
-import { formatTimeRange24 } from "@/lib/dateTime";
+import { formatDayAwareDateTime, formatTimeRange } from "@/lib/dateTime";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Progress } from "@/components/ui/progress";
 import type { Post, User } from "@/types";
 
 const Dashboard = () => {
-  const { currentUser, users, posts, visibleFeedPosts, markNotificationsForLinkRead, presenceByUserId } = useApp();
+  const { currentUser, users, posts, settings, visibleFeedPosts, markNotificationsForLinkRead, presenceByUserId } = useApp();
   const [open, setOpen] = useState(false);
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const logHistoryRef = useRef(false);
@@ -156,7 +156,8 @@ const Dashboard = () => {
                     key={post.userId}
                     post={post}
                     author={users.find((user) => user.id === post.userId)}
-                    presence={presenceByUserId[post.userId]}
+                    presence={presenceByUserId[post.userId] ?? { active: false, lastSeen: users.find((user) => user.id === post.userId)?.lastSeen }}
+                    timeFormat={settings.timeFormat}
                     onOpen={() => openUserFeed(post.userId)}
                   />
                 ))
@@ -180,7 +181,7 @@ const Empty = ({ text }: { text: string }) => (
   <div className="rounded-lg border border-dashed border-border bg-card p-8 text-center text-sm text-muted-foreground">{text}</div>
 );
 
-const LatestUserPost = ({ post, author, presence, onOpen }: { post: Post; author?: User; presence?: { active?: boolean; lastSeen?: number }; onOpen: () => void }) => (
+const LatestUserPost = ({ post, author, presence, timeFormat, onOpen }: { post: Post; author?: User; presence?: { active?: boolean; lastSeen?: number }; timeFormat?: "12" | "24"; onOpen: () => void }) => (
   <button
     type="button"
     onClick={onOpen}
@@ -193,13 +194,13 @@ const LatestUserPost = ({ post, author, presence, onOpen }: { post: Post; author
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="truncate text-sm font-black">{author?.username ?? "unknown"}</p>
-          <p className={`truncate text-xs ${presence?.active ? "font-bold text-success" : "text-muted-foreground"}`}>{formatPresence(presence)}</p>
+          <p className={`whitespace-normal break-words text-xs ${presence?.active ? "font-bold text-success" : "text-muted-foreground"}`}>{formatPresence(presence, timeFormat)}</p>
         </div>
         <span className="shrink-0 text-xs font-bold text-muted-foreground">{formatDayLabel(startOfLocalDay(post.startTime))}</span>
       </div>
       <div className="inline-flex items-center gap-2 rounded-lg bg-muted px-3 py-2 text-sm font-semibold">
         <Clock3 className="size-4 text-primary" />
-        {formatTimeRange24(post.startTime, post.endTime)}
+        {formatTimeRange(post.startTime, post.endTime, timeFormat)}
       </div>
       <p className="line-clamp-2 whitespace-pre-wrap text-sm leading-relaxed text-foreground">{post.content}</p>
       <p className="text-xs font-bold text-primary">View all posts</p>
@@ -207,15 +208,10 @@ const LatestUserPost = ({ post, author, presence, onOpen }: { post: Post; author
   </button>
 );
 
-const formatPresence = (status?: { active?: boolean; lastSeen?: number }) => {
+const formatPresence = (status?: { active?: boolean; lastSeen?: number }, timeFormat: "12" | "24" = "24") => {
   if (status?.active) return "Active";
   if (!status?.lastSeen) return "Last seen unavailable";
-  return `Last seen ${new Date(status.lastSeen).toLocaleString(undefined, {
-    day: "2-digit",
-    month: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-  })}`;
+  return `Last seen ${formatDayAwareDateTime(status.lastSeen, timeFormat)}`;
 };
 
 const groupPostsByDay = (posts: Post[]) => {

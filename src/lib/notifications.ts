@@ -108,6 +108,58 @@ export const showLocalNotification = async (
   }
 };
 
+export const scheduleTaskReminderNotification = async (
+  id: number,
+  title: string,
+  body: string,
+  at: Date,
+  link = "/tasks"
+) => {
+  if (at.getTime() <= Date.now()) return;
+
+  if (Capacitor.isNativePlatform()) {
+    await ensureChannel();
+    const perm = await LocalNotifications.checkPermissions();
+    if (perm.display !== "granted") {
+      const requested = await LocalNotifications.requestPermissions().catch(() => ({ display: "denied" as const }));
+      if (requested.display !== "granted") return;
+    }
+    await LocalNotifications.cancel({ notifications: [{ id }] }).catch(() => undefined);
+    await LocalNotifications.schedule({
+      notifications: [
+        {
+          title,
+          body,
+          id,
+          channelId: CHANNEL_ID,
+          smallIcon: "ic_stat_icon_config_sample",
+          iconColor: "#0f9aa2",
+          extra: { type: "task_reminder", link },
+          schedule: { at, allowWhileIdle: true },
+        },
+      ],
+    }).catch((err) => console.error("Failed to schedule task reminder:", err));
+    return;
+  }
+
+  if ("Notification" in window && Notification.permission !== "granted") {
+    await Notification.requestPermission().catch(() => undefined);
+  }
+  const delay = at.getTime() - Date.now();
+  if (delay > 0 && delay < 2_147_483_647) {
+    window.setTimeout(() => {
+      if ("Notification" in window && Notification.permission === "granted") {
+        new Notification(title, { body, icon: "/favicon.ico" });
+      }
+    }, delay);
+  }
+};
+
+export const cancelTaskReminderNotification = async (id: number) => {
+  if (!Capacitor.isNativePlatform()) return;
+  await LocalNotifications.cancel({ notifications: [{ id }] }).catch(() => undefined);
+};
+
 /** Schedule the next midnight notification for unlogged gaps. */
 export const scheduleDailyMidnightNotification = async (enabled: boolean, body?: string) => {
   const message = body ?? "There are some time slots that you have not kept logs for.";

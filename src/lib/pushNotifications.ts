@@ -38,7 +38,9 @@ export const setPushNotificationNavigationHandler = (handler: ((path: string) =>
 
 export const pathForNotification = (data?: { type?: string; link?: string } | null) => {
   if (!data) return "/dashboard";
-  if (data.type === "group_message" && data.link?.startsWith("/groups/")) return data.link;
+  if ((data.type === "group_message" || data.type === "group_reaction") && data.link?.startsWith("/groups/")) return data.link;
+  if ((data.type === "post_like" || data.type === "post_comment") && data.link) return data.link;
+  if (data.type === "task_reminder") return data.link || "/tasks";
   if (data.type === "connection_request" || data.type === "connection_accepted") return "/friends";
   if (data.type === "unlogged_gaps") return "/dashboard";
   return data.link || "/dashboard";
@@ -140,7 +142,7 @@ export const initFCMPush = async (
     // Push received while app is in foreground
     listenerHandles.push(await mod.PushNotifications.addListener("pushNotificationReceived", (notif: unknown) => {
       const n = notif as { title?: string; body?: string; data?: { type?: string; link?: string } };
-      if (n.data?.type === "group_message" && n.data.link === activePath) return;
+      if ((n.data?.type === "group_message" || n.data?.type === "group_reaction") && n.data.link === activePath) return;
       if (n.title && n.body && onForegroundPush) {
         onForegroundPush(n.title, n.body, n.data);
       }

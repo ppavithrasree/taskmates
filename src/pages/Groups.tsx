@@ -1,16 +1,19 @@
 import { FormEvent, ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, Bell, BellOff, Check, CheckCheck, Edit3, Info, LogOut, MoreVertical, Pencil, Pin, PinOff, Plus, Reply, Send, SmilePlus, Trash2, UserPlus, UsersRound, X } from "lucide-react";
+import { ArrowLeft, Bell, BellOff, Check, CheckCheck, Edit3, Info, LogOut, MoreVertical, Pencil, Pin, PinOff, Plus, Reply, Send, Trash2, UserPlus, UsersRound, X } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/components/layout/AppShell";
 import { useApp } from "@/context/AppContext";
-import { formatClockTime24 } from "@/lib/dateTime";
+import { formatClockTime, formatDayAwareDateTime } from "@/lib/dateTime";
 import { Button } from "@/components/ui/button";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import type { GroupMessage, User } from "@/types";
+
+const DEFAULT_REACTIONS = ["\u{1F44D}", "\u{2764}\u{FE0F}", "\u{1F602}", "\u{1F62E}", "\u{1F622}"];
+const MORE_REACTIONS = ["\u{1F389}", "\u{1F525}", "\u{1F44F}", "\u{1F64F}", "\u{1F60D}", "\u{1F914}", "\u{1F973}", "\u{1F44C}", "\u{1F601}", "\u{1F605}", "\u{1F621}", "\u{1F4AF}", "\u{1F680}", "\u{2B50}", "\u{1F31F}", "\u{1F917}"];
 
 const Groups = () => {
   const { groupId, mode } = useParams();
@@ -19,7 +22,7 @@ const Groups = () => {
 };
 
 const GroupsList = () => {
-  const { currentUser, users, visibleGroups, groupMessages, getAcceptedConnectionIds, createGroup } = useApp();
+  const { currentUser, users, settings, visibleGroups, groupMessages, getAcceptedConnectionIds, createGroup } = useApp();
   const [createOpen, setCreateOpen] = useState(false);
   const [name, setName] = useState("");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -76,7 +79,7 @@ const GroupsList = () => {
                     <div className="flex items-start justify-between gap-3">
                       <p className="truncate font-bold">{group.name}</p>
                       <span className="shrink-0 text-xs text-muted-foreground">
-                        {lastMessage ? formatClockTime24(lastMessage.createdAt) : `${group.memberIds.length} members`}
+                        {lastMessage ? formatClockTime(lastMessage.createdAt, settings.timeFormat) : `${group.memberIds.length} members`}
                       </span>
                     </div>
                     <div className="mt-1 flex items-center gap-3">
@@ -126,9 +129,11 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
     toggleGroupMessageReaction,
     markGroupMessagesRead,
     markGroupNotificationsRead,
+    setActiveGroupChat,
     presenceByUserId,
     typingByGroupId,
     emitTyping,
+    settings,
   } = useApp();
   const [message, setMessage] = useState("");
   const [replyToMessageId, setReplyToMessageId] = useState<string | null>(null);
@@ -142,6 +147,7 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
   const messagesRef = useRef<HTMLElement | null>(null);
   const messageRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const swipeRef = useRef<{ id: string; x: number; y: number } | null>(null);
+  const longPressTimerRef = useRef<number | null>(null);
   const suppressSelectRef = useRef(false);
   const typingRef = useRef<{ groupId?: string; active: boolean; timer?: number }>({ active: false });
 
@@ -171,6 +177,11 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
   const typingUsers = (typingByGroupId[groupId] ?? [])
     .map((id) => userById.get(id)?.username)
     .filter(Boolean) as string[];
+
+  useEffect(() => {
+    setActiveGroupChat(groupId);
+    return () => setActiveGroupChat(null);
+  }, [groupId, setActiveGroupChat]);
 
   useEffect(() => {
     if (!currentUser || !group || !isMember) return;
@@ -392,8 +403,18 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
                   className={`flex ${mine ? "justify-end" : "justify-start"}`}
                   onPointerDown={(event) => {
                     swipeRef.current = { id: item.id, x: event.clientX, y: event.clientY };
+                    if (longPressTimerRef.current) window.clearTimeout(longPressTimerRef.current);
+                    longPressTimerRef.current = window.setTimeout(() => {
+                      suppressSelectRef.current = true;
+                      setActionMessageId(item.id);
+                      window.setTimeout(() => { suppressSelectRef.current = false; }, 0);
+                    }, 450);
                   }}
                   onPointerUp={(event) => {
+                    if (longPressTimerRef.current) {
+                      window.clearTimeout(longPressTimerRef.current);
+                      longPressTimerRef.current = null;
+                    }
                     const start = swipeRef.current;
                     swipeRef.current = null;
                     if (!start || start.id !== item.id) return;
@@ -405,7 +426,11 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
                       window.setTimeout(() => { suppressSelectRef.current = false; }, 0);
                     }
                   }}
-                  onPointerCancel={() => { swipeRef.current = null; }}
+                  onPointerCancel={() => {
+                    if (longPressTimerRef.current) window.clearTimeout(longPressTimerRef.current);
+                    longPressTimerRef.current = null;
+                    swipeRef.current = null;
+                  }}
                 >
                   <div
                     className={`chat-bubble max-w-[82%] rounded-lg px-3 py-2 ${mine ? "bg-emerald-700 text-white dark:bg-emerald-500 dark:text-emerald-950" : "bg-card text-card-foreground"
@@ -413,7 +438,7 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
                     style={{ touchAction: "pan-y" }}
                     onClick={() => {
                       if (suppressSelectRef.current) return;
-                      setActionMessageId(item.id);
+                      if (mine) setSelectedMessageId(item.id);
                     }}
                   >
                     {!mine && <p className="mb-1 text-xs font-bold text-accent">{sender?.username ?? "Unknown"}</p>}
@@ -435,7 +460,7 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
                     <ReactionSummary reactions={item.reactions} />
                     <div className={`mt-1 flex items-center justify-end gap-1.5 text-[10px] ${mine ? "text-white/80 dark:text-emerald-950/75" : "text-muted-foreground"}`}>
                       {pinned && <Pin className="size-3" />}
-                      <span>{formatClockTime24(item.createdAt)}</span>
+                      <span>{formatClockTime(item.createdAt, settings.timeFormat)}</span>
                       <button
                         type="button"
                         onClick={(event) => {
@@ -522,6 +547,7 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
         message={selectedMessage}
         members={members}
         currentUserId={currentUser.id}
+        timeFormat={settings.timeFormat}
         onOpenChange={(open) => !open && setSelectedMessageId(null)}
       />
       <MessageActionsDialog
@@ -590,6 +616,7 @@ const GroupInfo = ({ groupId }: { groupId: string }) => {
     isGroupMuted,
     getAcceptedConnectionIds,
     presenceByUserId,
+    settings,
   } = useApp();
   const navigate = useNavigate();
   const [editingName, setEditingName] = useState(false);
@@ -697,7 +724,7 @@ const GroupInfo = ({ groupId }: { groupId: string }) => {
             <PersonRow
               key={member.id}
               username={`${member.username}${member.id === currentUser.id ? " (you)" : ""}`}
-              detail={formatPresence(presenceByUserId[member.id])}
+              detail={formatPresence(presenceByUserId[member.id] ?? { active: false, lastSeen: member.lastSeen }, settings.timeFormat)}
               action={
                 <Button size="sm" variant="outline" onClick={() => removeMember(member.id)}>
                   <Trash2 className="mr-1 size-4" /> Remove
@@ -768,11 +795,13 @@ const MessageInfoDialog = ({
   message,
   members,
   currentUserId,
+  timeFormat,
   onOpenChange,
 }: {
   message?: GroupMessage;
   members: User[];
   currentUserId: string;
+  timeFormat?: "12" | "24";
   onOpenChange: (open: boolean) => void;
 }) => {
   const deliveredTo = message?.deliveredTo ?? [];
@@ -790,7 +819,7 @@ const MessageInfoDialog = ({
           <div className="space-y-4">
             <div className="rounded-lg bg-primary-soft p-3 text-sm">
               <p className="whitespace-pre-wrap break-all font-medium leading-relaxed">{message.content}</p>
-              <p className="mt-1 text-[10px] font-bold text-muted-foreground">{formatClockTime24(message.createdAt)}</p>
+              <p className="mt-1 text-[10px] font-bold text-muted-foreground">{formatClockTime(message.createdAt, timeFormat)}</p>
             </div>
             <ReceiptSection title="Seen by" users={seenMembers} detail="Seen" />
             <ReceiptSection title="Delivered to" users={deliveredMembers} detail="Delivered" />
@@ -824,8 +853,23 @@ const MessageActionsDialog = ({
   onEdit: (message: GroupMessage) => void;
   onDelete: (message: GroupMessage) => void;
   onInfo: (message: GroupMessage) => void;
-}) => (
-  <Dialog open={Boolean(message)} onOpenChange={onOpenChange}>
+}) => {
+  const [customReaction, setCustomReaction] = useState("");
+  const [customOpen, setCustomOpen] = useState(false);
+  const react = (reaction: string) => {
+    if (!message || !reaction.trim()) return;
+    onReact(message, reaction.trim());
+    onOpenChange(false);
+  };
+
+  return (
+  <Dialog open={Boolean(message)} onOpenChange={(open) => {
+    if (!open) {
+      setCustomOpen(false);
+      setCustomReaction("");
+    }
+    onOpenChange(open);
+  }}>
     <DialogContent className="max-h-[90dvh] w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)] overflow-x-hidden overflow-y-auto rounded-lg sm:max-w-md">
       <DialogHeader><DialogTitle>Message options</DialogTitle></DialogHeader>
       {message && (
@@ -833,13 +877,35 @@ const MessageActionsDialog = ({
           <div className="w-full min-w-0 rounded-lg bg-primary-soft p-3 text-sm">
             <p className="min-w-0 whitespace-pre-wrap break-all font-medium leading-relaxed">{message.content}</p>
           </div>
-          <div className="flex flex-wrap gap-2">
-            {REACTIONS.map((reaction) => (
-              <Button key={reaction} type="button" variant="outline" size="sm" className="h-9 px-3 text-base" onClick={() => onReact(message, reaction)}>
-                <SmilePlus className="mr-1 size-3.5" /> {reaction}
-              </Button>
+          <div className="flex items-center gap-2 rounded-full border border-border bg-card p-2 shadow-soft">
+            {DEFAULT_REACTIONS.map((reaction) => (
+              <button key={reaction} type="button" className="flex size-10 items-center justify-center rounded-full text-xl hover:bg-primary-soft" onClick={() => react(reaction)}>
+                {reaction}
+              </button>
             ))}
+            <button type="button" className="flex size-10 items-center justify-center rounded-full bg-primary-soft text-primary" onClick={() => setCustomOpen((value) => !value)} aria-label="Choose another reaction">
+              <Plus className="size-5" />
+            </button>
           </div>
+          {customOpen && (
+            <div className="space-y-2 rounded-lg border border-border bg-background p-3">
+              <Input
+                value={customReaction}
+                onChange={(event) => setCustomReaction(event.target.value)}
+                placeholder="Type or pick an emoji"
+                className="bg-card text-lg"
+                autoFocus
+              />
+              <div className="grid grid-cols-8 gap-1">
+                {MORE_REACTIONS.map((reaction) => (
+                  <button key={reaction} type="button" className="rounded-lg p-2 text-xl hover:bg-primary-soft" onClick={() => react(reaction)}>
+                    {reaction}
+                  </button>
+                ))}
+              </div>
+              <Button type="button" size="sm" className="w-full" onClick={() => react(customReaction)}>Use emoji</Button>
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-2">
             <Button type="button" variant="outline" onClick={() => onReply(message)}>
               <Reply className="mr-2 size-4" /> Reply
@@ -866,7 +932,8 @@ const MessageActionsDialog = ({
       )}
     </DialogContent>
   </Dialog>
-);
+  );
+};
 
 const ReceiptSection = ({ title, users, detail }: { title: string; users: User[]; detail: string }) => (
   <section className="space-y-2">
@@ -879,15 +946,10 @@ const ReceiptSection = ({ title, users, detail }: { title: string; users: User[]
   </section>
 );
 
-const formatPresence = (status?: { active?: boolean; lastSeen?: number }) => {
+const formatPresence = (status?: { active?: boolean; lastSeen?: number }, timeFormat: "12" | "24" = "24") => {
   if (status?.active) return "Active";
   if (!status?.lastSeen) return "Last seen unavailable";
-  return `Last seen ${new Date(status.lastSeen).toLocaleString(undefined, {
-    day: "2-digit",
-    month: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-  })}`;
+  return `Last seen ${formatDayAwareDateTime(status.lastSeen, timeFormat)}`;
 };
 
 const UnreadBadge = ({ count }: { count: number }) => {
@@ -898,8 +960,6 @@ const UnreadBadge = ({ count }: { count: number }) => {
     </span>
   );
 };
-
-const REACTIONS = ["👍", "❤️", "😂", "🔥", "👏"];
 
 const ReactionSummary = ({ reactions }: { reactions?: Record<string, string> }) => {
   const counts = Object.values(reactions ?? {}).reduce<Record<string, number>>((acc, reaction) => {
@@ -1002,7 +1062,7 @@ const PersonIdentity = ({ username, detail }: { username: string; detail: string
     </div>
     <div className="min-w-0">
       <p className="truncate font-bold">{username}</p>
-      <p className="truncate text-xs text-muted-foreground">{detail}</p>
+      <p className="whitespace-normal break-words text-xs text-muted-foreground">{detail}</p>
     </div>
   </div>
 );

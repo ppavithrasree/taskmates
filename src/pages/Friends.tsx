@@ -4,11 +4,12 @@ import { CheckCircle2, Inbox, Search, Send, Trash2, UserRound, UsersRound, UserP
 import { toast } from "sonner";
 import { AppShell } from "@/components/layout/AppShell";
 import { useApp } from "@/context/AppContext";
+import { formatDayAwareDateTime } from "@/lib/dateTime";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
 const Friends = () => {
-  const { currentUser, users, connections, searchUsers, sendRequest, respondRequest, deleteConnection, getAcceptedConnectionIds, getConnectionStatus, markNotificationsForLinkRead, presenceByUserId } = useApp();
+  const { currentUser, users, connections, settings, searchUsers, sendRequest, respondRequest, deleteConnection, getAcceptedConnectionIds, getConnectionStatus, markNotificationsForLinkRead, presenceByUserId } = useApp();
   const [query, setQuery] = useState("");
   const results = useMemo(() => searchUsers(query), [query, searchUsers]);
 
@@ -54,7 +55,8 @@ const Friends = () => {
                       username={user.username}
                       status={status}
                       mutualCount={mutualCount}
-                      presence={presenceByUserId[user.id]}
+                      presence={presenceByUserId[user.id] ?? { active: false, lastSeen: user.lastSeen }}
+                      timeFormat={settings.timeFormat}
                       action={
                         status === "none" ? (
                           <Button size="sm" onClick={() => request(user.id)}>
@@ -83,7 +85,8 @@ const Friends = () => {
                   key={connection.id}
                   username={sender.username}
                   status="incoming"
-                  presence={presenceByUserId[sender.id]}
+                  presence={presenceByUserId[sender.id] ?? { active: false, lastSeen: sender.lastSeen }}
+                  timeFormat={settings.timeFormat}
                   action={
                     <div className="flex gap-1">
                       <Button size="icon" variant="outline" onClick={() => respondRequest(connection.id, true)}>
@@ -112,7 +115,8 @@ const Friends = () => {
                 key={user.id}
                 username={user.username}
                 status="connected"
-                presence={presenceByUserId[user.id]}
+                presence={presenceByUserId[user.id] ?? { active: false, lastSeen: user.lastSeen }}
+                timeFormat={settings.timeFormat}
                 action={
                   <Button size="sm" variant="destructive" onClick={() => removeConnection(user.id)}>
                     <Trash2 className="mr-1 size-4" /> Remove
@@ -140,12 +144,14 @@ const PersonRow = ({
   status,
   mutualCount = 0,
   presence,
+  timeFormat,
   action,
 }: {
   username: string;
   status: keyof typeof statusMeta;
   mutualCount?: number;
   presence?: { active?: boolean; lastSeen?: number };
+  timeFormat?: "12" | "24";
   action?: ReactNode;
 }) => {
   const meta = statusMeta[status];
@@ -161,7 +167,7 @@ const PersonRow = ({
           <p className="truncate font-bold">{username}</p>
           <div className="flex items-center gap-1 text-xs text-muted-foreground">
             <Icon className={`size-3 ${meta.tone}`} />
-            <span>{status === "connected" ? formatPresence(presence) : status === "none" ? `${mutualCount} mutual${mutualCount === 1 ? "" : "s"}` : meta.label}</span>
+            <span>{status === "connected" ? formatPresence(presence, timeFormat) : status === "none" ? `${mutualCount} mutual${mutualCount === 1 ? "" : "s"}` : meta.label}</span>
           </div>
         </div>
       </Link>
@@ -170,15 +176,10 @@ const PersonRow = ({
   );
 };
 
-const formatPresence = (status?: { active?: boolean; lastSeen?: number }) => {
+const formatPresence = (status?: { active?: boolean; lastSeen?: number }, timeFormat: "12" | "24" = "24") => {
   if (status?.active) return "Active";
   if (!status?.lastSeen) return "Last seen unavailable";
-  return `Last seen ${new Date(status.lastSeen).toLocaleString(undefined, {
-    day: "2-digit",
-    month: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-  })}`;
+  return `Last seen ${formatDayAwareDateTime(status.lastSeen, timeFormat)}`;
 };
 
 export default Friends;

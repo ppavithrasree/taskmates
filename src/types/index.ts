@@ -13,6 +13,7 @@ export interface User {
   theme?: "light" | "dark";
   mutedGroupIds?: string[];
   notificationsEnabled?: boolean;
+  lastSeen?: number;
   createdAt: number;
   updatedAt: number;
   passwordHash?: string;
@@ -28,6 +29,7 @@ export interface Post {
   content: string;
   visibility?: Visibility;
   customUsernames?: string[];
+  likes?: string[];
   reactions?: Record<string, string>;
   comments?: PostComment[];
   createdAt: number;
@@ -86,7 +88,14 @@ export interface GroupMessage {
   dirty?: boolean;
 }
 
-export type NotificationType = "connection_request" | "connection_accepted" | "unlogged_gaps" | "group_message";
+export type NotificationType =
+  | "connection_request"
+  | "connection_accepted"
+  | "unlogged_gaps"
+  | "group_message"
+  | "group_reaction"
+  | "post_like"
+  | "post_comment";
 
 export interface AppNotification {
   id: string;
@@ -121,6 +130,7 @@ export interface SyncOperation {
 
 export interface AppSettings {
   theme: "light" | "dark";
+  timeFormat?: "12" | "24";
   lastRetentionRun?: number;
   notificationLastSeen?: number;
 }

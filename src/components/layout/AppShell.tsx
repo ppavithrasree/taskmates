@@ -1,6 +1,6 @@
 import { ReactNode } from "react";
 import { NavLink, Navigate, useNavigate } from "react-router-dom";
-import { Bell, LayoutDashboard, LogOut, Search, Settings, User, UsersRound } from "lucide-react";
+import { Bell, ClipboardList, LayoutDashboard, LogOut, Search, Settings, User, UsersRound } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -58,6 +58,9 @@ export const AppShell = ({
             <Button variant="ghost" size="icon" onClick={() => navigate("/notifications")} aria-label="Notifications" className="relative">
               <Bell className="size-4" />
               <Badge count={unreadNotificationCount} />
+            </Button>
+            <Button variant="ghost" size="icon" onClick={() => navigate("/tasks")} aria-label="My tasks">
+              <ClipboardList className="size-4" />
             </Button>
             <Button variant="ghost" size="icon" onClick={signOut} aria-label="Logout">
               <LogOut className="size-4" />

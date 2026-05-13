@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { Link } from "react-router-dom";
-import { Bell, BellOff, Clock3, MessageSquare, UserCheck, UserPlus } from "lucide-react";
+import { Bell, BellOff, Clock3, Heart, MessageCircle, MessageSquare, SmilePlus, UserCheck, UserPlus } from "lucide-react";
 import { AppShell } from "@/components/layout/AppShell";
 import { useApp } from "@/context/AppContext";
 import type { AppNotification } from "@/types";
@@ -10,6 +10,9 @@ const iconMap: Record<AppNotification["type"], typeof Bell> = {
   connection_accepted: UserCheck,
   unlogged_gaps: Clock3,
   group_message: MessageSquare,
+  group_reaction: SmilePlus,
+  post_like: Heart,
+  post_comment: MessageCircle,
 };
 
 const toneMap: Record<AppNotification["type"], string> = {
@@ -17,6 +20,9 @@ const toneMap: Record<AppNotification["type"], string> = {
   connection_accepted: "bg-success-soft text-success",
   unlogged_gaps: "bg-accent-soft text-accent",
   group_message: "bg-primary-soft text-primary",
+  group_reaction: "bg-accent-soft text-accent",
+  post_like: "bg-destructive/10 text-destructive",
+  post_comment: "bg-success-soft text-success",
 };
 
 const timeAgo = (timestamp: number) => {

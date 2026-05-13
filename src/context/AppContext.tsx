@@ -34,6 +34,7 @@ import { connectPresence, emitTyping as emitSocketTyping, updatePresenceGroups, 
 const LS_KEY = "taskmates_activity_state_v1";
 const SESSION_KEY = "taskmates_activity_session_v1";
 const TOKEN_KEY = "taskmates_firebase_token_v1";
+const LAST_SEEN_KEY = "taskmates_last_seen_cache_v1";
 const DEFAULT_THEME: "light" | "dark" = "dark";
 
 interface AppContextValue {
@@ -71,16 +72,19 @@ interface AppContextValue {
   markGroupMessagesRead: (groupId: string) => void;
   markGroupNotificationsRead: (groupId: string) => void;
   markNotificationsForLinkRead: (link: string) => void;
+  setActiveGroupChat: (groupId: string | null) => void;
   toggleMuteGroup: (groupId: string) => void;
   isGroupMuted: (groupId: string) => boolean;
   addPost: (input: { startTime: number; endTime: number; content: string; visibility?: Visibility; customUsernames?: string[] }) => AuthResult;
   updatePost: (id: string, patch: Partial<Pick<Post, "startTime" | "endTime" | "content" | "visibility" | "customUsernames">>) => AuthResult;
   deletePost: (id: string) => void;
-  togglePostReaction: (postId: string, reaction: string) => AuthResult;
+  togglePostLike: (postId: string) => AuthResult;
   addPostComment: (postId: string, content: string) => AuthResult;
+  updatePostComment: (postId: string, commentId: string, content: string) => AuthResult;
   deletePostComment: (postId: string, commentId: string) => AuthResult;
   updateUserSettings: (patch: Partial<Pick<User, "privacy" | "customUsernames" | "retentionDays" | "notificationsEnabled">>) => void;
   updateTheme: (theme: "light" | "dark") => void;
+  updateTimeFormat: (format: "12" | "24") => void;
   runRetentionCleanup: () => void;
   markNotificationsRead: () => void;
   unreadNotificationCount: number;
@@ -99,6 +103,18 @@ const uid = (prefix = "id") => `${prefix}_${crypto.randomUUID?.() ?? Math.random
 
 const hashPassword = (password: string) => btoa(unescape(encodeURIComponent(password)));
 
+const loadLastSeenCache = (): Record<string, number> => {
+  try {
+    return JSON.parse(localStorage.getItem(LAST_SEEN_KEY) ?? "{}") as Record<string, number>;
+  } catch {
+    return {};
+  }
+};
+
+const saveLastSeenCache = (cache: Record<string, number>) => {
+  localStorage.setItem(LAST_SEEN_KEY, JSON.stringify(cache));
+};
+
 const emptyState = (): AppState => ({
   users: [],
   posts: [],
@@ -107,7 +123,7 @@ const emptyState = (): AppState => ({
   groupMessages: [],
   notifications: [],
   syncQueue: [],
-  settings: { theme: DEFAULT_THEME },
+  settings: { theme: DEFAULT_THEME, timeFormat: "24" },
 });
 
 const makeUser = (id: string, username: string, createdAt: number, password: string): User => ({
@@ -150,6 +166,7 @@ const load = (): AppState => {
     const nextSettings = {
       ...parsed.settings,
       theme: parsed.settings?.theme ?? DEFAULT_THEME,
+      timeFormat: parsed.settings?.timeFormat ?? "24",
     };
     if (isDemoOnly) return { ...emptyState(), settings: nextSettings };
     // Remove soft-deleted posts from local state on load
@@ -236,6 +253,33 @@ const remoteWithPendingLocal = <T extends { id: string; dirty?: boolean }>(local
 
 const mergeIds = (a?: string[], b?: string[]) => [...new Set([...(a ?? []), ...(b ?? [])])];
 
+const sameMap = (a?: Record<string, string>, b?: Record<string, string>) =>
+  JSON.stringify(a ?? {}) === JSON.stringify(b ?? {});
+
+const mergePosts = (local: Post[], remote: Post[]) => {
+  const map = new Map(local.map((item) => [item.id, item]));
+  for (const item of remote) {
+    const existing = map.get(item.id);
+    if (!existing) {
+      map.set(item.id, { ...item, dirty: false });
+      continue;
+    }
+    if (!existing.dirty && item.updatedAt >= existing.updatedAt) {
+      map.set(item.id, { ...item, dirty: false });
+      continue;
+    }
+    map.set(item.id, {
+      ...existing,
+      likes: item.updatedAt >= existing.updatedAt ? (item.likes ?? existing.likes) : (existing.likes ?? item.likes),
+      reactions: item.updatedAt >= existing.updatedAt ? (item.reactions ?? existing.reactions) : (existing.reactions ?? item.reactions),
+      comments: item.updatedAt >= existing.updatedAt ? (item.comments ?? existing.comments) : (existing.comments ?? item.comments),
+      updatedAt: Math.max(existing.updatedAt, item.updatedAt),
+      dirty: existing.dirty,
+    });
+  }
+  return [...map.values()];
+};
+
 const mergeGroupMessages = (local: GroupMessage[], remote: GroupMessage[]) => {
   const map = new Map(local.map((item) => [item.id, item]));
   for (const item of remote) {
@@ -262,7 +306,11 @@ const mergeGroupMessages = (local: GroupMessage[], remote: GroupMessage[]) => {
     map.set(item.id, {
       ...existing,
       pinnedBy: existing.pinnedBy ?? item.pinnedBy,
-      reactions: item.updatedAt >= existing.updatedAt ? (item.reactions ?? existing.reactions) : (existing.reactions ?? item.reactions),
+      reactions: sameMap(item.reactions, existing.reactions)
+        ? existing.reactions
+        : item.updatedAt >= existing.updatedAt
+          ? (item.reactions ?? existing.reactions)
+          : (existing.reactions ?? item.reactions),
       recipientIds: mergeIds(existing.recipientIds, item.recipientIds),
       deliveredTo: mergeIds(existing.deliveredTo, item.deliveredTo),
       readBy: mergeIds(existing.readBy, item.readBy),
@@ -281,6 +329,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   const [decryptedMessages, setDecryptedMessages] = useState<Record<string, string>>({});
   const [presenceByUserId, setPresenceByUserId] = useState<Record<string, PresenceStatus>>({});
   const [typingByGroupId, setTypingByGroupId] = useState<Record<string, string[]>>({});
+  const [activeGroupChatId, setActiveGroupChatId] = useState<string | null>(null);
 
   useEffect(() => localStorage.setItem(LS_KEY, JSON.stringify(state)), [state]);
   useEffect(() => {
@@ -395,7 +444,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     if (!hasFirebaseConfig || !currentUserId) return;
     return subscribeFirebaseState(currentUserId, (remote) => {
       setState((snapshot) => {
-        let nextPosts = remote.posts ? remoteWithPendingLocal(snapshot.posts, remote.posts) : snapshot.posts;
+        let nextPosts = remote.posts ? mergePosts(snapshot.posts, remote.posts) : snapshot.posts;
         nextPosts = nextPosts.filter((p) => !p.deletedAt);
 
         // For connections, use Firebase as source of truth:
@@ -423,9 +472,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
 
         let nextGroupMessages: GroupMessage[];
         if (remote.groupMessages) {
-          const remoteMap = new Map(remote.groupMessages.map((message) => [message.id, message]));
-          const dirtyLocal = snapshot.groupMessages.filter((message) => message.dirty && !remoteMap.has(message.id));
-          nextGroupMessages = mergeGroupMessages(dirtyLocal, remote.groupMessages);
+          nextGroupMessages = mergeGroupMessages(snapshot.groupMessages, remote.groupMessages);
         } else {
           nextGroupMessages = snapshot.groupMessages;
         }
@@ -743,6 +790,18 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const logout = async () => {
+    if (currentUser) {
+      const now = Date.now();
+      const updated = { ...currentUser, lastSeen: now, updatedAt: now };
+      const cache = loadLastSeenCache();
+      cache[currentUser.id] = now;
+      saveLastSeenCache(cache);
+      setState((snapshot) => ({
+        ...snapshot,
+        users: snapshot.users.map((user) => user.id === currentUser.id ? updated : user),
+      }));
+      commitOperation(queueFor("users", "upsert", updated.id, updated));
+    }
     localStorage.removeItem(TOKEN_KEY);
     await firebaseSignOut().catch(() => undefined);
     setCurrentUserId(null);
@@ -1043,7 +1102,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
           memberId,
           "group_message",
           group.name,
-          `${currentUser.username} sent an encrypted message.`,
+          `${currentUser.username}: ${clean}`,
           `/groups/${groupId}`
         );
       }
@@ -1152,7 +1211,8 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     const group = state.groups.find((item) => item.id === message.groupId);
     if (!group?.memberIds.includes(currentUser.id)) return { ok: false, error: "Group not found." };
     const reactions = { ...(message.reactions ?? {}) };
-    if (reactions[currentUser.id] === reaction) delete reactions[currentUser.id];
+    const removing = reactions[currentUser.id] === reaction;
+    if (removing) delete reactions[currentUser.id];
     else reactions[currentUser.id] = reaction;
     const updated = { ...message, reactions, updatedAt: Date.now(), dirty: true };
     setState((snapshot) => ({
@@ -1160,6 +1220,15 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       groupMessages: snapshot.groupMessages.map((item) => item.id === messageId ? updated : item),
     }));
     commitOperation(queueFor("groupMessages", "upsert", updated.id, updated));
+    if (!removing && message.senderId !== currentUser.id) {
+      createNotification(
+        message.senderId,
+        "group_reaction",
+        group.name,
+        `${currentUser.username} reacted ${reaction} to your message.`,
+        `/groups/${message.groupId}`
+      );
+    }
     return { ok: true };
   };
 
@@ -1287,19 +1356,27 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     commitOperation(queueFor("posts", "delete", id));
   };
 
-  const togglePostReaction: AppContextValue["togglePostReaction"] = (postId, reaction) => {
+  const togglePostLike: AppContextValue["togglePostLike"] = (postId) => {
     if (!currentUser) return { ok: false, error: "Sign in first." };
     const post = state.posts.find((item) => item.id === postId);
     if (!post) return { ok: false, error: "Post not found." };
-    const reactions = { ...(post.reactions ?? {}) };
-    if (reactions[currentUser.id] === reaction) delete reactions[currentUser.id];
-    else reactions[currentUser.id] = reaction;
-    const updated = { ...post, reactions, updatedAt: Date.now(), dirty: true };
+    const likes = post.likes ?? [];
+    const liked = likes.includes(currentUser.id);
+    const updated = { ...post, likes: liked ? likes.filter((id) => id !== currentUser.id) : [...likes, currentUser.id], updatedAt: Date.now(), dirty: true };
     setState((snapshot) => ({
       ...snapshot,
       posts: snapshot.posts.map((item) => item.id === postId ? updated : item),
     }));
     commitOperation(queueFor("posts", "upsert", updated.id, updated));
+    if (!liked && post.userId !== currentUser.id) {
+      createNotification(
+        post.userId,
+        "post_like",
+        "New like",
+        `${currentUser.username} liked your post.`,
+        `/dashboard?post=${post.id}`
+      );
+    }
     return { ok: true };
   };
 
@@ -1312,6 +1389,37 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     const now = Date.now();
     const comment: PostComment = { id: uid("pc"), userId: currentUser.id, content: clean, createdAt: now, updatedAt: now };
     const updated = { ...post, comments: [...(post.comments ?? []), comment], updatedAt: now, dirty: true };
+    setState((snapshot) => ({
+      ...snapshot,
+      posts: snapshot.posts.map((item) => item.id === postId ? updated : item),
+    }));
+    commitOperation(queueFor("posts", "upsert", updated.id, updated));
+    if (post.userId !== currentUser.id) {
+      createNotification(
+        post.userId,
+        "post_comment",
+        "New comment",
+        `${currentUser.username} commented: ${clean}`,
+        `/dashboard?post=${post.id}`
+      );
+    }
+    return { ok: true };
+  };
+
+  const updatePostComment: AppContextValue["updatePostComment"] = (postId, commentId, content) => {
+    if (!currentUser) return { ok: false, error: "Sign in first." };
+    const post = state.posts.find((item) => item.id === postId);
+    if (!post) return { ok: false, error: "Post not found." };
+    const clean = content.trim();
+    if (!clean) return { ok: false, error: "Type a comment first." };
+    const comment = (post.comments ?? []).find((item) => item.id === commentId);
+    if (!comment || comment.userId !== currentUser.id) return { ok: false, error: "You can edit only your comments." };
+    const updated = {
+      ...post,
+      comments: (post.comments ?? []).map((item) => item.id === commentId ? { ...item, content: clean, updatedAt: Date.now() } : item),
+      updatedAt: Date.now(),
+      dirty: true,
+    };
     setState((snapshot) => ({
       ...snapshot,
       posts: snapshot.posts.map((item) => item.id === postId ? updated : item),
@@ -1358,6 +1466,10 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       users: snapshot.users.map((user) => user.id === currentUser.id ? updated : user),
     }));
     commitOperation(operation);
+  };
+
+  const updateTimeFormat: AppContextValue["updateTimeFormat"] = (timeFormat) => {
+    setState((snapshot) => ({ ...snapshot, settings: { ...snapshot.settings, timeFormat } }));
   };
 
   const markNotificationsRead: AppContextValue["markNotificationsRead"] = useCallback(() => {
@@ -1504,7 +1616,17 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       onPresence: (items) => {
         setPresenceByUserId((current) => {
           const next = { ...current };
-          for (const item of items) next[item.userId] = item;
+          const lastSeenCache = loadLastSeenCache();
+          let cacheChanged = false;
+          for (const item of items) {
+            const cachedLastSeen = item.lastSeen ?? lastSeenCache[item.userId];
+            next[item.userId] = { ...item, lastSeen: cachedLastSeen };
+            if (cachedLastSeen && lastSeenCache[item.userId] !== cachedLastSeen) {
+              lastSeenCache[item.userId] = cachedLastSeen;
+              cacheChanged = true;
+            }
+          }
+          if (cacheChanged) saveLastSeenCache(lastSeenCache);
           return next;
         });
       },
@@ -1549,6 +1671,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       state.groupMessages
         .filter((message) => {
           if (message.senderId === currentUser.id) return false;
+          if (message.groupId === activeGroupChatId) return false;
           const group = state.groups.find((item) => item.id === message.groupId);
           if (!group?.memberIds.includes(currentUser.id)) return false;
           return !(message.readBy ?? [message.senderId]).includes(currentUser.id);
@@ -1556,7 +1679,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         .map((message) => message.groupId)
     );
     return unreadGroupIds.size;
-  }, [currentUser, state.groupMessages, state.groups]);
+  }, [currentUser, state.groupMessages, state.groups, activeGroupChatId]);
 
   const value: AppContextValue = {
     currentUser,
@@ -1593,16 +1716,19 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     markGroupMessagesRead,
     markGroupNotificationsRead,
     markNotificationsForLinkRead,
+    setActiveGroupChat: setActiveGroupChatId,
     toggleMuteGroup,
     isGroupMuted,
     addPost,
     updatePost,
     deletePost,
-    togglePostReaction,
+    togglePostLike,
     addPostComment,
+    updatePostComment,
     deletePostComment,
     updateUserSettings,
     updateTheme,
+    updateTimeFormat,
     runRetentionCleanup,
     markNotificationsRead,
     unreadNotificationCount,

@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Bell, BellOff, Info, Moon, Shield, Sun, Trash2 } from "lucide-react";
+import { Bell, BellOff, Clock3, Info, Moon, Shield, Sun, Trash2 } from "lucide-react";
 import { AppShell } from "@/components/layout/AppShell";
 import { useApp } from "@/context/AppContext";
 import type { Visibility } from "@/types";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
@@ -13,10 +14,11 @@ import { Switch } from "@/components/ui/switch";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 const Settings = () => {
-  const { currentUser, settings, updateTheme, updateUserSettings, runRetentionCleanup } = useApp();
+  const { currentUser, users, settings, updateTheme, updateTimeFormat, updateUserSettings, runRetentionCleanup, getAcceptedConnectionIds } = useApp();
   const [draftRetentionDays, setDraftRetentionDays] = useState(currentUser?.retentionDays ?? 15);
   const [confirmRetentionOpen, setConfirmRetentionOpen] = useState(false);
   const [retentionInfoOpen, setRetentionInfoOpen] = useState(false);
+  const [usernameQuery, setUsernameQuery] = useState("");
   const savedRetentionDays = currentUser?.retentionDays ?? 15;
 
   useEffect(() => {
@@ -25,6 +27,7 @@ const Settings = () => {
   }, [savedRetentionDays, confirmRetentionOpen]);
 
   if (!currentUser) return null;
+  const connections = users.filter((user) => getAcceptedConnectionIds(currentUser.id).includes(user.id));
 
   const saveRetentionDays = () => {
     if (draftRetentionDays === currentUser.retentionDays) {
@@ -74,6 +77,28 @@ const Settings = () => {
           </div>
         </section>
 
+        <section className="rounded-lg border border-border bg-card p-4 shadow-soft">
+          <h2 className="mb-3 flex items-center gap-2 font-black"><Clock3 className="size-4 text-primary" /> Time Format</h2>
+          <div className="grid grid-cols-2 gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              className={(settings.timeFormat ?? "24") === "12" ? "border-primary bg-primary-soft text-primary" : "bg-card"}
+              onClick={() => updateTimeFormat("12")}
+            >
+              12 hours
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              className={(settings.timeFormat ?? "24") === "24" ? "border-primary bg-primary-soft text-primary" : "bg-card"}
+              onClick={() => updateTimeFormat("24")}
+            >
+              24 hours
+            </Button>
+          </div>
+        </section>
+
         <section className="space-y-4 rounded-lg border border-border bg-card p-4 shadow-soft">
           <h2 className="flex items-center gap-2 font-black"><Shield className="size-4 text-primary" /> Privacy</h2>
           <Select value={currentUser.privacy} onValueChange={(value) => updateUserSettings({ privacy: value as Visibility })}>
@@ -85,11 +110,19 @@ const Settings = () => {
             </SelectContent>
           </Select>
           {currentUser.privacy === "custom" && (
-            <Input
-              value={currentUser.customUsernames.join(", ")}
-              onChange={(event) => updateUserSettings({ customUsernames: event.target.value.split(",").map((item) => item.trim().toLowerCase()).filter(Boolean) })}
-              placeholder="aria, maya"
-              className="bg-background"
+            <UsernameChecklist
+              users={connections}
+              selectedUsernames={currentUser.customUsernames}
+              query={usernameQuery}
+              onQueryChange={setUsernameQuery}
+              onToggle={(username, checked) => {
+                const current = currentUser.customUsernames ?? [];
+                updateUserSettings({
+                  customUsernames: checked
+                    ? [...new Set([...current, username])]
+                    : current.filter((item) => item !== username),
+                });
+              }}
             />
           )}
         </section>
@@ -166,6 +199,40 @@ const Settings = () => {
         </DialogContent>
       </Dialog>
     </AppShell>
+  );
+};
+
+const UsernameChecklist = ({
+  users,
+  selectedUsernames,
+  query,
+  onQueryChange,
+  onToggle,
+}: {
+  users: { id: string; username: string }[];
+  selectedUsernames: string[];
+  query: string;
+  onQueryChange: (value: string) => void;
+  onToggle: (username: string, checked: boolean) => void;
+}) => {
+  const filtered = users.filter((user) => user.username.toLowerCase().includes(query.trim().toLowerCase()));
+  if (users.length === 0) return <p className="text-sm text-muted-foreground">Connect with people first, then choose custom usernames.</p>;
+  return (
+    <div className="space-y-3">
+      <Input value={query} onChange={(event) => onQueryChange(event.target.value)} placeholder="Search usernames" className="bg-background" />
+      <div className="max-h-56 space-y-2 overflow-y-auto pr-1">
+        {filtered.length === 0 ? (
+          <p className="rounded-lg border border-dashed border-border p-4 text-sm text-muted-foreground">No matching usernames.</p>
+        ) : (
+          filtered.map((user) => (
+            <label key={user.id} className="flex items-center gap-3 rounded-lg border border-border bg-background p-3 text-sm">
+              <Checkbox checked={selectedUsernames.includes(user.username)} onCheckedChange={(checked) => onToggle(user.username, checked === true)} />
+              <span className="font-bold">{user.username}</span>
+            </label>
+          ))
+        )}
+      </div>
+    </div>
   );
 };
 

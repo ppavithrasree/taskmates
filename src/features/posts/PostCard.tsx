@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { Clock3, Globe2, MessageCircle, Pencil, Send, SmilePlus, Trash2, Users } from "lucide-react";
+import { Clock3, Globe2, Heart, MessageCircle, Pencil, Send, Trash2, Users } from "lucide-react";
 import { toast } from "sonner";
 import type { Post, Visibility } from "@/types";
 import { useApp } from "@/context/AppContext";
-import { formatTimeRange24 } from "@/lib/dateTime";
+import { formatTimeRange } from "@/lib/dateTime";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
@@ -17,13 +17,17 @@ const visibility: Record<Visibility, { label: string; icon: typeof Globe2; class
 };
 
 export const PostCard = ({ post }: { post: Post }) => {
-  const { currentUser, users, deletePost, togglePostReaction, addPostComment, deletePostComment } = useApp();
+  const { currentUser, users, settings, deletePost, togglePostLike, addPostComment, updatePostComment, deletePostComment } = useApp();
   const [editOpen, setEditOpen] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [deleteCommentId, setDeleteCommentId] = useState<string | null>(null);
+  const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
+  const [editingComment, setEditingComment] = useState("");
   const [comment, setComment] = useState("");
   const editHistoryRef = useRef(false);
   const author = users.find((user) => user.id === post.userId);
   const isMine = currentUser?.id === post.userId;
+  const liked = (post.likes ?? []).includes(currentUser?.id ?? "");
   const meta = visibility[post.visibility ?? author?.privacy ?? "public"];
   const Icon = meta.icon;
 
@@ -39,7 +43,6 @@ export const PostCard = ({ post }: { post: Post }) => {
       editHistoryRef.current = false;
       setEditOpen(false);
     };
-
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
   }, []);
@@ -52,11 +55,6 @@ export const PostCard = ({ post }: { post: Post }) => {
     setEditOpen(false);
   };
 
-  const react = (reaction: string) => {
-    const result = togglePostReaction(post.id, reaction);
-    if (!result.ok) toast.error(result.error);
-  };
-
   const submitComment = (event: React.FormEvent) => {
     event.preventDefault();
     const result = addPostComment(post.id, comment);
@@ -65,6 +63,27 @@ export const PostCard = ({ post }: { post: Post }) => {
       return;
     }
     setComment("");
+  };
+
+  const saveComment = (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!editingCommentId) return;
+    const result = updatePostComment(post.id, editingCommentId, editingComment);
+    if (!result.ok) {
+      toast.error(result.error);
+      return;
+    }
+    toast.success("Comment updated.");
+    setEditingCommentId(null);
+    setEditingComment("");
+  };
+
+  const deleteSelectedComment = () => {
+    if (!deleteCommentId) return;
+    const result = deletePostComment(post.id, deleteCommentId);
+    if (!result.ok) toast.error(result.error);
+    else toast.success("Comment deleted.");
+    setDeleteCommentId(null);
   };
 
   return (
@@ -87,25 +106,29 @@ export const PostCard = ({ post }: { post: Post }) => {
 
       <div className="mb-3 flex items-center gap-2 rounded-lg bg-muted px-3 py-2 text-sm font-semibold">
         <Clock3 className="size-4 text-primary" />
-        {formatTimeRange24(post.startTime, post.endTime)}
+        {formatTimeRange(post.startTime, post.endTime, settings.timeFormat)}
       </div>
       <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-foreground">{post.content}</p>
 
       <section className="mt-4 space-y-3 border-t border-border pt-3">
         <div className="flex flex-wrap items-center gap-2">
-          {REACTIONS.map((reaction) => (
-            <Button
-              key={reaction}
-              type="button"
-              size="sm"
-              variant={post.reactions?.[currentUser?.id ?? ""] === reaction ? "default" : "outline"}
-              className="h-8 px-2 text-base"
-              onClick={() => react(reaction)}
-            >
-              <SmilePlus className="mr-1 size-3.5" /> {reaction}
-            </Button>
-          ))}
-          <ReactionSummary reactions={post.reactions} />
+          <Button
+            type="button"
+            size="sm"
+            variant={liked ? "default" : "outline"}
+            className="h-9"
+            onClick={() => {
+              const result = togglePostLike(post.id);
+              if (!result.ok) toast.error(result.error);
+            }}
+          >
+            <Heart className="mr-1 size-4" /> {liked ? "Liked" : "Like"}
+          </Button>
+          <span className="text-xs font-bold text-muted-foreground">{(post.likes ?? []).length} likes</span>
+          <span className="text-xs font-bold text-muted-foreground">-</span>
+          <span className="flex items-center gap-1 text-xs font-bold text-muted-foreground">
+            <MessageCircle className="size-3.5" /> {(post.comments ?? []).length} comments
+          </span>
         </div>
 
         <div className="space-y-2">
@@ -118,27 +141,56 @@ export const PostCard = ({ post }: { post: Post }) => {
             (post.comments ?? []).map((item) => {
               const commenter = users.find((user) => user.id === item.userId);
               const canDelete = currentUser?.id === item.userId || currentUser?.id === post.userId;
+              const canEdit = currentUser?.id === item.userId;
               return (
                 <div key={item.id} className="rounded-lg bg-muted/70 px-3 py-2 text-sm">
                   <div className="mb-1 flex items-center justify-between gap-2">
                     <Link to={commenter ? `/profile/${commenter.username}` : "#"} className="truncate text-xs font-black text-primary">
                       {commenter?.username ?? "unknown"}
                     </Link>
-                    {canDelete && (
-                      <button
-                        type="button"
-                        className="shrink-0 text-muted-foreground hover:text-destructive"
-                        onClick={() => {
-                          const result = deletePostComment(post.id, item.id);
-                          if (!result.ok) toast.error(result.error);
-                        }}
-                        aria-label="Delete comment"
-                      >
-                        <Trash2 className="size-3.5" />
-                      </button>
-                    )}
+                    <div className="flex shrink-0 items-center gap-2">
+                      {canEdit && (
+                        <button
+                          type="button"
+                          className="text-muted-foreground hover:text-primary"
+                          onClick={() => {
+                            setEditingCommentId(item.id);
+                            setEditingComment(item.content);
+                          }}
+                          aria-label="Edit comment"
+                        >
+                          <Pencil className="size-3.5" />
+                        </button>
+                      )}
+                      {canDelete && (
+                        <button
+                          type="button"
+                          className="text-muted-foreground hover:text-destructive"
+                          onClick={() => setDeleteCommentId(item.id)}
+                          aria-label="Delete comment"
+                        >
+                          <Trash2 className="size-3.5" />
+                        </button>
+                      )}
+                    </div>
                   </div>
-                  <p className="whitespace-pre-wrap break-words">{item.content}</p>
+                  {editingCommentId === item.id ? (
+                    <form onSubmit={saveComment} className="space-y-2">
+                      <textarea
+                        value={editingComment}
+                        onChange={(event) => setEditingComment(event.target.value)}
+                        rows={2}
+                        maxLength={1000}
+                        className="min-h-16 w-full resize-y rounded-lg border border-input bg-background px-3 py-2 text-sm"
+                      />
+                      <div className="flex justify-end gap-2">
+                        <Button type="button" size="sm" variant="ghost" onClick={() => setEditingCommentId(null)}>Cancel</Button>
+                        <Button type="submit" size="sm">Save</Button>
+                      </div>
+                    </form>
+                  ) : (
+                    <p className="whitespace-pre-wrap break-words">{item.content}</p>
+                  )}
                 </div>
               );
             })
@@ -193,27 +245,22 @@ export const PostCard = ({ post }: { post: Post }) => {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <AlertDialog open={Boolean(deleteCommentId)} onOpenChange={(open) => !open && setDeleteCommentId(null)}>
+        <AlertDialogContent className="rounded-lg">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this comment?</AlertDialogTitle>
+            <AlertDialogDescription>This comment will be permanently removed.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction className="bg-destructive text-destructive-foreground" onClick={deleteSelectedComment}>
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </article>
-  );
-};
-
-const REACTIONS = ["👍", "❤️", "😂", "🔥", "👏"];
-
-const ReactionSummary = ({ reactions }: { reactions?: Record<string, string> }) => {
-  const counts = Object.values(reactions ?? {}).reduce<Record<string, number>>((acc, reaction) => {
-    acc[reaction] = (acc[reaction] ?? 0) + 1;
-    return acc;
-  }, {});
-  const entries = Object.entries(counts);
-  if (!entries.length) return null;
-  return (
-    <div className="flex flex-wrap gap-1 text-xs font-bold text-muted-foreground">
-      {entries.map(([reaction, count]) => (
-        <span key={reaction} className="rounded-full bg-background px-2 py-1">
-          {reaction} {count}
-        </span>
-      ))}
-    </div>
   );
 };
 

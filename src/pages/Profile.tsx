@@ -6,12 +6,13 @@ import { AppShell } from "@/components/layout/AppShell";
 import { PostCard } from "@/features/posts/PostCard";
 import { useApp } from "@/context/AppContext";
 import { activityStats } from "@/lib/timeCoverage";
+import { formatDayAwareDateTime } from "@/lib/dateTime";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
 const Profile = () => {
   const { username } = useParams();
-  const { currentUser, users, posts, changePassword, getAcceptedConnectionIds, presenceByUserId } = useApp();
+  const { currentUser, users, posts, settings, changePassword, getAcceptedConnectionIds, presenceByUserId } = useApp();
   const [password, setPassword] = useState("");
   const target = currentUser ? (username ? users.find((user) => user.username === username.toLowerCase()) : currentUser) : undefined;
   const isOwn = Boolean(currentUser && target?.id === currentUser.id);
@@ -51,7 +52,7 @@ const Profile = () => {
               <p className="truncate text-sm text-muted-foreground">{target.email}</p>
               {!isOwn && (
                 <p className={`mt-1 text-sm ${presenceByUserId[target.id]?.active ? "font-bold text-success" : "text-muted-foreground"}`}>
-                  {formatPresence(presenceByUserId[target.id])}
+                  {formatPresence(presenceByUserId[target.id] ?? { active: false, lastSeen: target.lastSeen }, settings.timeFormat)}
                 </p>
               )}
               <div className="mt-3 flex flex-wrap gap-2 text-xs font-bold">
@@ -101,13 +102,8 @@ const Info = ({ icon: Icon, label, value }: { icon: typeof Timer; label: string;
 
 export default Profile;
 
-const formatPresence = (status?: { active?: boolean; lastSeen?: number }) => {
+const formatPresence = (status?: { active?: boolean; lastSeen?: number }, timeFormat: "12" | "24" = "24") => {
   if (status?.active) return "Active";
   if (!status?.lastSeen) return "Last seen unavailable";
-  return `Last seen ${new Date(status.lastSeen).toLocaleString(undefined, {
-    day: "2-digit",
-    month: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-  })}`;
+  return `Last seen ${formatDayAwareDateTime(status.lastSeen, timeFormat)}`;
 };

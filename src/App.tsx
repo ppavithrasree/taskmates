@@ -17,6 +17,7 @@ import Groups from "./pages/Groups.tsx";
 import Profile from "./pages/Profile.tsx";
 import Settings from "./pages/Settings.tsx";
 import Notifications from "./pages/Notifications.tsx";
+import MyTasks from "./pages/MyTasks.tsx";
 import NotFound from "./pages/NotFound.tsx";
 
 const queryClient = new QueryClient();
@@ -29,7 +30,8 @@ const backTargetFor = (pathname: string) => {
     pathname === "/profile" ||
     pathname.startsWith("/profile/") ||
     pathname === "/settings" ||
-    pathname === "/notifications"
+    pathname === "/notifications" ||
+    pathname === "/tasks"
   ) {
     return "/dashboard";
   }
@@ -171,6 +173,7 @@ const App = () => (
             <Route path="/profile/:username" element={<Profile />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="/notifications" element={<Notifications />} />
+            <Route path="/tasks" element={<MyTasks />} />
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
             <Route path="*" element={<NotFound />} />
           </Routes>
