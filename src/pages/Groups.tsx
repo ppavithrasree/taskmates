@@ -438,7 +438,7 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
                     style={{ touchAction: "pan-y" }}
                     onClick={() => {
                       if (suppressSelectRef.current) return;
-                      if (mine) setSelectedMessageId(item.id);
+                      setSelectedMessageId(item.id);
                     }}
                   >
                     {!mine && <p className="mb-1 text-xs font-bold text-accent">{sender?.username ?? "Unknown"}</p>}
@@ -810,6 +810,9 @@ const MessageInfoDialog = ({
   const seenMembers = otherMembers.filter((member) => readBy.includes(member.id));
   const deliveredMembers = otherMembers.filter((member) => deliveredTo.includes(member.id) && !readBy.includes(member.id));
   const waitingMembers = otherMembers.filter((member) => !deliveredTo.includes(member.id));
+  const reactionEntries = Object.entries(message?.reactions ?? {})
+    .map(([userId, reaction]) => ({ user: members.find((member) => member.id === userId), reaction }))
+    .filter((item): item is { user: User; reaction: string } => Boolean(item.user));
 
   return (
     <Dialog open={Boolean(message)} onOpenChange={onOpenChange}>
@@ -821,6 +824,16 @@ const MessageInfoDialog = ({
               <p className="whitespace-pre-wrap break-all font-medium leading-relaxed">{message.content}</p>
               <p className="mt-1 text-[10px] font-bold text-muted-foreground">{formatClockTime(message.createdAt, timeFormat)}</p>
             </div>
+            <section className="space-y-2">
+              <h3 className="text-sm font-black">Reactions</h3>
+              {reactionEntries.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-border bg-card p-4 text-sm text-muted-foreground">No reactions yet.</div>
+              ) : (
+                reactionEntries.map(({ user, reaction }) => (
+                  <PersonRow key={user.id} username={user.username} detail={`Reacted ${reaction}`} />
+                ))
+              )}
+            </section>
             <ReceiptSection title="Seen by" users={seenMembers} detail="Seen" />
             <ReceiptSection title="Delivered to" users={deliveredMembers} detail="Delivered" />
             <ReceiptSection title="Not delivered yet" users={waitingMembers} detail="Waiting" />

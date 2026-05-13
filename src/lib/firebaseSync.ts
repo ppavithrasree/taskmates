@@ -118,7 +118,6 @@ const cleanPayload = (payload: unknown) => {
   const record = { ...(payload as Record<string, unknown>) };
   delete record.dirty;
   delete record.passwordHash;
-  if (record.encrypted === true) record.content = "";
   return stripUndefined(record) as Record<string, unknown>;
 };
 

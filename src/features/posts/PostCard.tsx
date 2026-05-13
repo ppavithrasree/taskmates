@@ -20,6 +20,7 @@ export const PostCard = ({ post }: { post: Post }) => {
   const { currentUser, users, settings, deletePost, togglePostLike, addPostComment, updatePostComment, deletePostComment } = useApp();
   const [editOpen, setEditOpen] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [likesOpen, setLikesOpen] = useState(false);
   const [deleteCommentId, setDeleteCommentId] = useState<string | null>(null);
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
   const [editingComment, setEditingComment] = useState("");
@@ -124,7 +125,9 @@ export const PostCard = ({ post }: { post: Post }) => {
           >
             <Heart className="mr-1 size-4" /> {liked ? "Liked" : "Like"}
           </Button>
-          <span className="text-xs font-bold text-muted-foreground">{(post.likes ?? []).length} likes</span>
+          <button type="button" className="text-xs font-bold text-primary underline-offset-2 hover:underline" onClick={() => setLikesOpen(true)}>
+            {(post.likes ?? []).length} likes
+          </button>
           <span className="text-xs font-bold text-muted-foreground">-</span>
           <span className="flex items-center gap-1 text-xs font-bold text-muted-foreground">
             <MessageCircle className="size-3.5" /> {(post.comments ?? []).length} comments
@@ -245,6 +248,29 @@ export const PostCard = ({ post }: { post: Post }) => {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <Dialog open={likesOpen} onOpenChange={setLikesOpen}>
+        <DialogContent className="max-h-[90dvh] overflow-y-auto rounded-lg">
+          <DialogHeader><DialogTitle>Liked by</DialogTitle></DialogHeader>
+          {(post.likes ?? []).length === 0 ? (
+            <p className="text-sm text-muted-foreground">No likes yet.</p>
+          ) : (
+            <div className="space-y-2">
+              {(post.likes ?? []).map((userId) => {
+                const user = users.find((item) => item.id === userId);
+                return (
+                  <Link key={userId} to={user ? `/profile/${user.username}` : "#"} className="flex items-center gap-3 rounded-lg border border-border bg-card p-3">
+                    <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-accent-soft font-black text-accent">
+                      {(user?.username ?? "?").charAt(0).toUpperCase()}
+                    </div>
+                    <span className="font-bold">{user?.username ?? "Unknown"}</span>
+                  </Link>
+                );
+              })}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       <AlertDialog open={Boolean(deleteCommentId)} onOpenChange={(open) => !open && setDeleteCommentId(null)}>
         <AlertDialogContent className="rounded-lg">

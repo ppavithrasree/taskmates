@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
-import { BrowserRouter, Route, Routes, useLocation, useNavigate } from "react-router-dom";
+import { BrowserRouter, Route, Routes, useLocation, useNavigate, useNavigationType } from "react-router-dom";
 import { Capacitor } from "@capacitor/core";
 import { toast } from "sonner";
 import { Toaster as Sonner } from "@/components/ui/sonner";
@@ -41,13 +41,28 @@ const backTargetFor = (pathname: string) => {
 const BackRouteController = () => {
   const location = useLocation();
   const navigate = useNavigate();
+  const navigationType = useNavigationType();
   const pathRef = useRef(location.pathname);
   const lastExitPromptRef = useRef(0);
+
+  const closeTopDialog = () => {
+    if (!document.querySelector('[role="dialog"]')) return false;
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    return true;
+  };
 
   useEffect(() => {
     pathRef.current = location.pathname;
     setActivePushPath(location.pathname);
   }, [location.pathname]);
+
+  useEffect(() => {
+    if (navigationType !== "POP") return;
+    const target = backTargetFor(location.pathname);
+    if (target && location.pathname !== target) {
+      navigate(target, { replace: true });
+    }
+  }, [location.pathname, navigationType, navigate]);
 
   useEffect(() => {
     setPushNotificationNavigationHandler((path) => navigate(path || "/dashboard"));
@@ -56,7 +71,7 @@ const BackRouteController = () => {
 
   useEffect(() => {
     const onPopState = () => {
-      if (document.querySelector('[role="dialog"]')) return;
+      if (closeTopDialog()) return;
       const target = backTargetFor(pathRef.current);
       if (!target) return;
       window.setTimeout(() => {
@@ -74,17 +89,12 @@ const BackRouteController = () => {
 
     import("@capacitor/app").then(({ App }) => {
       App.addListener("backButton", ({ canGoBack }) => {
-        if (document.querySelector('[role="dialog"]')) return;
+        if (closeTopDialog()) return;
 
         const pathname = pathRef.current;
         const target = backTargetFor(pathname);
         if (target) {
           navigate(target, { replace: true });
-          return;
-        }
-
-        if (window.history.state?.taskmatesFeedUser) {
-          window.history.back();
           return;
         }
 
@@ -96,11 +106,6 @@ const BackRouteController = () => {
           }
           lastExitPromptRef.current = now;
           toast("Do again to exit.");
-          return;
-        }
-
-        if (canGoBack) {
-          window.history.back();
           return;
         }
 

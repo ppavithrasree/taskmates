@@ -105,6 +105,7 @@ app.post("/api/send-notification", authenticate, async (req, res) => {
               priority: "high",
               notification: {
                 channelId: "taskmates_alerts_v2",
+                icon: "ic_stat_taskmates",
                 priority: "max",
                 defaultSound: true,
                 defaultVibrateTimings: true,

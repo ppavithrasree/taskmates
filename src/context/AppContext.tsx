@@ -253,6 +253,21 @@ const remoteWithPendingLocal = <T extends { id: string; dirty?: boolean }>(local
 
 const mergeIds = (a?: string[], b?: string[]) => [...new Set([...(a ?? []), ...(b ?? [])])];
 
+const sameIds = (a?: string[], b?: string[]) => {
+  const left = [...(a ?? [])].sort();
+  const right = [...(b ?? [])].sort();
+  return left.length === right.length && left.every((id, index) => id === right[index]);
+};
+
+const mergeComments = (a?: PostComment[], b?: PostComment[]) => {
+  const map = new Map<string, PostComment>();
+  for (const comment of [...(a ?? []), ...(b ?? [])]) {
+    const existing = map.get(comment.id);
+    if (!existing || comment.updatedAt >= existing.updatedAt) map.set(comment.id, comment);
+  }
+  return [...map.values()].sort((left, right) => left.createdAt - right.createdAt);
+};
+
 const sameMap = (a?: Record<string, string>, b?: Record<string, string>) =>
   JSON.stringify(a ?? {}) === JSON.stringify(b ?? {});
 
@@ -270,9 +285,13 @@ const mergePosts = (local: Post[], remote: Post[]) => {
     }
     map.set(item.id, {
       ...existing,
-      likes: item.updatedAt >= existing.updatedAt ? (item.likes ?? existing.likes) : (existing.likes ?? item.likes),
+      likes: existing.dirty
+        ? existing.likes
+        : sameIds(existing.likes, item.likes)
+        ? existing.likes
+        : mergeIds(existing.likes, item.likes),
       reactions: item.updatedAt >= existing.updatedAt ? (item.reactions ?? existing.reactions) : (existing.reactions ?? item.reactions),
-      comments: item.updatedAt >= existing.updatedAt ? (item.comments ?? existing.comments) : (existing.comments ?? item.comments),
+      comments: mergeComments(existing.comments, item.comments),
       updatedAt: Math.max(existing.updatedAt, item.updatedAt),
       dirty: existing.dirty,
     });
@@ -1068,7 +1087,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       id: uid("gm"),
       groupId,
       senderId: currentUser.id,
-      content: "",
+      content: clean,
       encrypted: true,
       encryptionVersion: 2,
       ciphertext: encrypted.ciphertext,
@@ -1132,7 +1151,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
 
     const updated = {
       ...message,
-      content: "",
+      content: clean,
       encrypted: true,
       encryptionVersion: 2,
       ciphertext: encrypted.ciphertext,
@@ -1550,12 +1569,13 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     void (async () => {
       const next: Record<string, string> = {};
       for (const message of state.groupMessages) {
+        const plainFallback = message.content || "Message";
         if (!message.encrypted) {
-          next[message.id] = message.content;
+          next[message.id] = plainFallback;
           continue;
         }
         if (!message.iv || !message.ciphertext) {
-          next[message.id] = "Encrypted message unavailable.";
+          next[message.id] = plainFallback;
           continue;
         }
         const group = state.groups.find((item) => item.id === message.groupId);
@@ -1566,7 +1586,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
             ? await decryptGroupKeyForUser(currentUser.id, group.id, group.encryptedKeys?.[currentUser.id])
             : await decryptWrappedKeyForUser(currentUser.id, message.encryptedKeys[currentUser.id]);
           if (!messageKey) {
-            next[message.id] = "Encrypted message. Waiting for recipient key.";
+            next[message.id] = plainFallback;
             continue;
           }
           try {
@@ -1577,10 +1597,10 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
             const refreshedKey = await decryptGroupKeyForUser(currentUser.id, group.id, group.encryptedKeys[currentUser.id]);
             next[message.id] = refreshedKey
               ? await decryptMessageContent(refreshedKey, message.iv, message.ciphertext)
-              : "Encrypted message. Waiting for recipient key.";
+              : plainFallback;
           }
         } catch {
-          next[message.id] = "Encrypted message could not be decrypted.";
+          next[message.id] = plainFallback;
         }
       }
       if (cancelled) return;
@@ -1642,7 +1662,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
 
   const groupMessagesForUi = useMemo(
     () => state.groupMessages.map((message) => message.encrypted
-      ? { ...message, content: decryptedMessages[message.id] ?? "Decrypting..." }
+      ? { ...message, content: decryptedMessages[message.id] ?? message.content ?? "Message" }
       : message
     ),
     [state.groupMessages, decryptedMessages]
