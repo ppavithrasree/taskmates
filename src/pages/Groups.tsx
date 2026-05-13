@@ -183,8 +183,12 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
     return () => setActiveGroupChat(null);
   }, [groupId, setActiveGroupChat]);
 
+  const lastReadCountRef = useRef<number>(0);
   useEffect(() => {
     if (!currentUser || !group || !isMember) return;
+    // Only re-run when new messages arrive, not when delivery/read status changes
+    if (messages.length === lastReadCountRef.current) return;
+    lastReadCountRef.current = messages.length;
     markGroupMessagesRead(group.id);
     markGroupNotificationsRead(group.id);
   }, [currentUser, group, isMember, markGroupMessagesRead, markGroupNotificationsRead, messages.length]);
@@ -806,13 +810,15 @@ const MessageInfoDialog = ({
 }) => {
   const deliveredTo = message?.deliveredTo ?? [];
   const readBy = message?.readBy ?? [];
-  const otherMembers = members.filter((member) => member.id !== currentUserId);
+  // Exclude both current user AND the message sender from the lists (WhatsApp behavior)
+  const excludeIds = new Set([currentUserId, message?.senderId].filter(Boolean) as string[]);
+  const otherMembers = members.filter((member) => !excludeIds.has(member.id));
   const seenMembers = otherMembers.filter((member) => readBy.includes(member.id));
   const deliveredMembers = otherMembers.filter((member) => deliveredTo.includes(member.id) && !readBy.includes(member.id));
   const waitingMembers = otherMembers.filter((member) => !deliveredTo.includes(member.id));
   const reactionEntries = Object.entries(message?.reactions ?? {})
     .map(([userId, reaction]) => ({ user: members.find((member) => member.id === userId), reaction }))
-    .filter((item): item is { user: User; reaction: string } => Boolean(item.user));
+    .filter((item): item is { user: User; reaction: string } => Boolean(item.user) && item.user.id !== currentUserId);
 
   return (
     <Dialog open={Boolean(message)} onOpenChange={onOpenChange}>

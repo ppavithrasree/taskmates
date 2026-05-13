@@ -349,8 +349,31 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   const [presenceByUserId, setPresenceByUserId] = useState<Record<string, PresenceStatus>>({});
   const [typingByGroupId, setTypingByGroupId] = useState<Record<string, string[]>>({});
   const [activeGroupChatId, setActiveGroupChatId] = useState<string | null>(null);
+  const deliveryProcessedRef = useRef<Set<string>>(new Set());
+  const lsSaveTimerRef = useRef<number | undefined>(undefined);
+  const stateRef = useRef(state);
+  stateRef.current = state;
 
-  useEffect(() => localStorage.setItem(LS_KEY, JSON.stringify(state)), [state]);
+  // Debounced localStorage save — avoids blocking the main thread on every state update
+  useEffect(() => {
+    if (lsSaveTimerRef.current) window.clearTimeout(lsSaveTimerRef.current);
+    lsSaveTimerRef.current = window.setTimeout(() => {
+      localStorage.setItem(LS_KEY, JSON.stringify(state));
+    }, 500);
+    return () => { if (lsSaveTimerRef.current) window.clearTimeout(lsSaveTimerRef.current); };
+  }, [state]);
+  // Save immediately on unmount / page hide
+  useEffect(() => {
+    const saveNow = () => localStorage.setItem(LS_KEY, JSON.stringify(stateRef.current));
+    const onVisChange = () => { if (document.visibilityState === "hidden") saveNow(); };
+    window.addEventListener("visibilitychange", onVisChange);
+    window.addEventListener("pagehide", saveNow);
+    return () => {
+      window.removeEventListener("visibilitychange", onVisChange);
+      window.removeEventListener("pagehide", saveNow);
+      saveNow();
+    };
+  }, []);
   useEffect(() => {
     if (currentUserId) localStorage.setItem(SESSION_KEY, currentUserId);
     else localStorage.removeItem(SESSION_KEY);
@@ -509,17 +532,27 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     });
   }, [currentUserId]);
 
+  // Mark messages as delivered (2 ticks) — runs when messages arrive from Firebase.
+  // Uses a ref to track already-processed message IDs and prevent cascading re-renders.
   useEffect(() => {
     if (!currentUser) return;
     const now = Date.now();
-    const changedMessages: GroupMessage[] = state.groupMessages.flatMap((message) => {
-      if (message.senderId === currentUser.id) return [];
+    const changedMessages: GroupMessage[] = [];
+    for (const message of state.groupMessages) {
+      if (message.senderId === currentUser.id) continue;
+      // Skip if we already processed this message in this session
+      if (deliveryProcessedRef.current.has(message.id)) continue;
       const group = state.groups.find((item) => item.id === message.groupId);
-      if (!group?.memberIds.includes(currentUser.id)) return [];
+      if (!group?.memberIds.includes(currentUser.id)) continue;
       const deliveredTo = message.deliveredTo ?? [message.senderId];
-      if (deliveredTo.includes(currentUser.id)) return [];
-      return [{ ...message, deliveredTo: [...deliveredTo, currentUser.id], updatedAt: now, dirty: true }];
-    });
+      if (deliveredTo.includes(currentUser.id)) {
+        // Already delivered, just mark as processed so we skip next time
+        deliveryProcessedRef.current.add(message.id);
+        continue;
+      }
+      deliveryProcessedRef.current.add(message.id);
+      changedMessages.push({ ...message, deliveredTo: [...deliveredTo, currentUser.id], updatedAt: now, dirty: true });
+    }
 
     if (changedMessages.length === 0) return;
     const changedById = new Map(changedMessages.map((message) => [message.id, message]));
@@ -1251,20 +1284,30 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     return { ok: true };
   };
 
-  const markGroupMessagesRead: AppContextValue["markGroupMessagesRead"] = (groupId) => {
-    if (!currentUser) return;
-    const group = state.groups.find((item) => item.id === groupId);
-    if (!group?.memberIds.includes(currentUser.id)) return;
+  const markGroupMessagesRead: AppContextValue["markGroupMessagesRead"] = useCallback((groupId) => {
+    const snap = stateRef.current;
+    const user = snap.users.find((u) => u.id === currentUserId);
+    if (!user) return;
+    const group = snap.groups.find((item) => item.id === groupId);
+    if (!group?.memberIds.includes(user.id)) return;
 
-    const changedMessages: GroupMessage[] = state.groupMessages.flatMap((message) => {
-      if (message.groupId !== groupId || message.senderId === currentUser.id) return [];
+    const now = Date.now();
+    const changedMessages: GroupMessage[] = [];
+    for (const message of snap.groupMessages) {
+      if (message.groupId !== groupId || message.senderId === user.id) continue;
       const deliveredTo = message.deliveredTo ?? [message.senderId];
       const readBy = message.readBy ?? [message.senderId];
-      const nextDeliveredTo = deliveredTo.includes(currentUser.id) ? deliveredTo : [...deliveredTo, currentUser.id];
-      const nextReadBy = readBy.includes(currentUser.id) ? readBy : [...readBy, currentUser.id];
-      if (nextDeliveredTo === deliveredTo && nextReadBy === readBy) return [];
-      return [{ ...message, deliveredTo: nextDeliveredTo, readBy: nextReadBy, updatedAt: Date.now(), dirty: true }];
-    });
+      const alreadyDelivered = deliveredTo.includes(user.id);
+      const alreadyRead = readBy.includes(user.id);
+      if (alreadyDelivered && alreadyRead) continue;
+      changedMessages.push({
+        ...message,
+        deliveredTo: alreadyDelivered ? deliveredTo : [...deliveredTo, user.id],
+        readBy: alreadyRead ? readBy : [...readBy, user.id],
+        updatedAt: now,
+        dirty: true,
+      });
+    }
 
     if (changedMessages.length === 0) return;
     const changedById = new Map(changedMessages.map((message) => [message.id, message]));
@@ -1274,22 +1317,26 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     }));
 
     for (const message of changedMessages) {
+      deliveryProcessedRef.current.add(message.id);
       commitOperation(queueFor("groupMessages", "upsert", message.id, message));
     }
-  };
+  }, [currentUserId, commitOperation]);
 
-  const markGroupNotificationsRead: AppContextValue["markGroupNotificationsRead"] = (groupId) => {
-    if (!currentUser) return;
-    const changedNotifications = state.notifications.flatMap((notification) => {
+  const markGroupNotificationsRead: AppContextValue["markGroupNotificationsRead"] = useCallback((groupId) => {
+    const snap = stateRef.current;
+    const user = snap.users.find((u) => u.id === currentUserId);
+    if (!user) return;
+    const now = Date.now();
+    const changedNotifications = snap.notifications.flatMap((notification) => {
       if (
-        notification.recipientId !== currentUser.id ||
+        notification.recipientId !== user.id ||
         notification.type !== "group_message" ||
         notification.link !== `/groups/${groupId}` ||
         notification.read
       ) {
         return [];
       }
-      return [{ ...notification, read: true, updatedAt: Date.now() }];
+      return [{ ...notification, read: true, updatedAt: now }];
     });
 
     if (changedNotifications.length === 0) return;
@@ -1302,7 +1349,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     for (const notification of changedNotifications) {
       commitOperation(queueFor("notifications", "upsert", notification.id, notification));
     }
-  };
+  }, [currentUserId, commitOperation]);
 
   const markNotificationsForLinkRead: AppContextValue["markNotificationsForLinkRead"] = useCallback((link) => {
     if (!currentUser) return;
@@ -1585,19 +1632,33 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     };
   }, [currentUser, visibleGroups, state.users, state.groupMessages, commitOperation]);
 
+  // Incremental decryption — only decrypt messages we haven't decrypted yet or whose ciphertext changed
+  const decryptionCacheRef = useRef<Record<string, { ciphertext?: string; iv?: string; content: string }>>({}); 
   useEffect(() => {
     if (!currentUser) return;
     let cancelled = false;
+    // Find only messages that need decryption (new or changed)
+    const toDecrypt = state.groupMessages.filter((message) => {
+      const cached = decryptionCacheRef.current[message.id];
+      if (!cached) return true;
+      // Re-decrypt if ciphertext or iv changed (e.g., message was edited)
+      return cached.ciphertext !== message.ciphertext || cached.iv !== message.iv;
+    });
+    // Also track deletions
+    const activeIds = new Set(state.groupMessages.map((m) => m.id));
     void (async () => {
       const next: Record<string, string> = {};
-      for (const message of state.groupMessages) {
+      for (const message of toDecrypt) {
+        if (cancelled) return;
         const plainFallback = message.content || "Message";
         if (!message.encrypted) {
           next[message.id] = plainFallback;
+          decryptionCacheRef.current[message.id] = { ciphertext: message.ciphertext, iv: message.iv, content: plainFallback };
           continue;
         }
         if (!message.iv || !message.ciphertext) {
           next[message.id] = plainFallback;
+          decryptionCacheRef.current[message.id] = { ciphertext: message.ciphertext, iv: message.iv, content: plainFallback };
           continue;
         }
         const group = state.groups.find((item) => item.id === message.groupId);
@@ -1609,23 +1670,33 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
             : await decryptWrappedKeyForUser(currentUser.id, message.encryptedKeys[currentUser.id]);
           if (!messageKey) {
             next[message.id] = plainFallback;
+            decryptionCacheRef.current[message.id] = { ciphertext: message.ciphertext, iv: message.iv, content: plainFallback };
             continue;
           }
           try {
-            next[message.id] = await decryptMessageContent(messageKey, message.iv, message.ciphertext);
+            const decrypted = await decryptMessageContent(messageKey, message.iv, message.ciphertext);
+            next[message.id] = decrypted;
+            decryptionCacheRef.current[message.id] = { ciphertext: message.ciphertext, iv: message.iv, content: decrypted };
           } catch (error) {
             if (!usesLegacyGroupKey || !group.encryptedKeys?.[currentUser.id]) throw error;
             clearCachedGroupKey(currentUser.id, group.id);
             const refreshedKey = await decryptGroupKeyForUser(currentUser.id, group.id, group.encryptedKeys[currentUser.id]);
-            next[message.id] = refreshedKey
+            const decrypted = refreshedKey
               ? await decryptMessageContent(refreshedKey, message.iv, message.ciphertext)
               : plainFallback;
+            next[message.id] = decrypted;
+            decryptionCacheRef.current[message.id] = { ciphertext: message.ciphertext, iv: message.iv, content: decrypted };
           }
         } catch {
           next[message.id] = plainFallback;
+          decryptionCacheRef.current[message.id] = { ciphertext: message.ciphertext, iv: message.iv, content: plainFallback };
         }
       }
       if (cancelled) return;
+      // Clean up stale decryption cache entries
+      for (const id of Object.keys(decryptionCacheRef.current)) {
+        if (!activeIds.has(id)) delete decryptionCacheRef.current[id];
+      }
       setDecryptedMessages((current) => {
         let changed = false;
         const merged = { ...current };
@@ -1636,7 +1707,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
           }
         }
         for (const id of Object.keys(merged)) {
-          if (!state.groupMessages.some((message) => message.id === id)) {
+          if (!activeIds.has(id)) {
             delete merged[id];
             changed = true;
           }
