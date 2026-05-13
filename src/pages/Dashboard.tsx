@@ -96,22 +96,27 @@ const Dashboard = () => {
   return (
     <AppShell title="Daily Activity">
       <div className="mx-auto max-w-5xl space-y-5 px-4 py-5">
-        <section className="color-band rounded-lg border border-border p-4 shadow-soft-lg">
-          <div className="flex items-start justify-between gap-4">
+        {/* ── Hero Stats Card ── */}
+        <section className="relative overflow-hidden rounded-2xl border border-border/60 bg-gradient-to-br from-primary/10 via-accent/8 to-success/8 p-5 shadow-soft-lg animate-fade-in-up">
+          <div className="absolute -right-6 -top-6 size-24 rounded-full bg-gradient-primary opacity-10 blur-2xl" />
+          <div className="absolute -left-4 -bottom-4 size-20 rounded-full bg-accent/20 blur-xl" />
+          <div className="relative flex items-start justify-between gap-4">
             <div>
-              <p className="text-sm text-muted-foreground">Hi, {currentUser.username}</p>
-              <h2 className="text-2xl font-black">Cover your day</h2>
+              <p className="text-sm font-medium text-muted-foreground">Welcome back</p>
+              <h2 className="text-2xl font-black tracking-tight bg-gradient-to-r from-primary via-accent to-success bg-clip-text text-transparent">{currentUser.username}</h2>
             </div>
-            <Button onClick={() => setOpen(true)} className="h-11 shrink-0">
+            <Button onClick={() => setOpen(true)} className="h-11 shrink-0 rounded-xl bg-gradient-primary shadow-glow hover:shadow-lg transition-all duration-300 hover:scale-105 active:scale-95">
               <Plus className="mr-1 size-4" /> Log
             </Button>
           </div>
-          <div className="mt-5 space-y-2">
+          <div className="relative mt-5 space-y-2">
             <div className="flex justify-between text-sm font-semibold">
-              <span>Today</span>
-              <span>{stats.coveragePercent}%</span>
+              <span>Today's Coverage</span>
+              <span className="text-gradient-primary font-black">{stats.coveragePercent}%</span>
             </div>
-            <Progress value={stats.coveragePercent} className="h-2" />
+            <div className="relative h-2.5 overflow-hidden rounded-full bg-muted/60">
+              <div className="h-full rounded-full bg-gradient-primary transition-all duration-700 ease-out" style={{ width: `${stats.coveragePercent}%` }} />
+            </div>
             <p className="text-xs text-muted-foreground">{stats.coveredMinutesToday} of 1440 minutes covered</p>
           </div>
         </section>
@@ -178,32 +183,40 @@ const Dashboard = () => {
 };
 
 const Empty = ({ text }: { text: string }) => (
-  <div className="rounded-lg border border-dashed border-border bg-card p-8 text-center text-sm text-muted-foreground">{text}</div>
+  <div className="rounded-2xl border border-dashed border-border/60 bg-card/50 p-8 text-center text-sm text-muted-foreground animate-fade-in-up backdrop-blur-sm">
+    <div className="mx-auto mb-3 size-12 rounded-full bg-gradient-soft flex items-center justify-center">
+      <Clock3 className="size-5 text-muted-foreground" />
+    </div>
+    {text}
+  </div>
 );
 
 const LatestUserPost = ({ post, author, presence, timeFormat, onOpen }: { post: Post; author?: User; presence?: { active?: boolean; lastSeen?: number }; timeFormat?: "12" | "24"; onOpen: () => void }) => (
   <button
     type="button"
     onClick={onOpen}
-    className="tap-lift flex w-full items-start gap-3 rounded-lg border border-border bg-card p-4 text-left shadow-soft transition-smooth hover:border-primary/40"
+    className="group tap-lift flex w-full items-start gap-3 rounded-2xl border border-border/60 bg-card/80 p-4 text-left shadow-soft backdrop-blur-sm transition-all duration-300 hover:border-primary/30 hover:shadow-soft-lg active:scale-[0.98]"
   >
-    <div className="flex size-11 shrink-0 items-center justify-center rounded-lg bg-gradient-primary font-bold text-primary-foreground">
+    <div className="relative flex size-12 shrink-0 items-center justify-center rounded-xl bg-gradient-primary font-bold text-primary-foreground text-lg shadow-md">
       {author?.username.charAt(0).toUpperCase() ?? "?"}
+      {presence?.active && (
+        <span className="absolute -bottom-0.5 -right-0.5 size-3.5 rounded-full border-2 border-card bg-emerald-500 shadow-sm" />
+      )}
     </div>
     <div className="min-w-0 flex-1 space-y-2">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="truncate text-sm font-black">{author?.username ?? "unknown"}</p>
-          <p className={`whitespace-normal break-words text-xs ${presence?.active ? "font-bold text-success" : "text-muted-foreground"}`}>{formatPresence(presence, timeFormat)}</p>
+          <p className={`whitespace-normal break-words text-xs ${presence?.active ? "font-bold text-emerald-500" : "text-muted-foreground"}`}>{formatPresence(presence, timeFormat)}</p>
         </div>
-        <span className="shrink-0 text-xs font-bold text-muted-foreground">{formatDayLabel(startOfLocalDay(post.startTime))}</span>
+        <span className="shrink-0 rounded-lg bg-muted/60 px-2 py-0.5 text-[10px] font-bold text-muted-foreground">{formatDayLabel(startOfLocalDay(post.startTime))}</span>
       </div>
-      <div className="inline-flex items-center gap-2 rounded-lg bg-muted px-3 py-2 text-sm font-semibold">
-        <Clock3 className="size-4 text-primary" />
+      <div className="inline-flex items-center gap-2 rounded-xl bg-primary/8 px-3 py-2 text-sm font-semibold text-primary">
+        <Clock3 className="size-4" />
         {formatTimeRange(post.startTime, post.endTime, timeFormat)}
       </div>
-      <p className="line-clamp-2 whitespace-pre-wrap text-sm leading-relaxed text-foreground">{post.content}</p>
-      <p className="text-xs font-bold text-primary">View all posts</p>
+      <p className="line-clamp-2 whitespace-pre-wrap text-sm leading-relaxed text-foreground/80">{post.content}</p>
+      <p className="text-xs font-bold text-primary group-hover:text-accent transition-colors duration-200">View all posts →</p>
     </div>
   </button>
 );

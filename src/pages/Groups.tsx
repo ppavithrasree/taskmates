@@ -49,19 +49,22 @@ const GroupsList = () => {
     <AppShell title="Groups">
       <div className="mx-auto max-w-3xl space-y-5 px-4 py-5">
         <div className="flex items-center justify-between gap-3">
-          <h1 className="text-2xl font-black">Groups</h1>
-          <Button onClick={() => setCreateOpen(true)} className="h-10 shrink-0">
-            <Plus className="mr-1 size-4" /> Create group
+          <h1 className="text-2xl font-black tracking-tight">Groups</h1>
+          <Button onClick={() => setCreateOpen(true)} className="h-10 shrink-0 rounded-xl bg-gradient-primary shadow-md hover:shadow-lg transition-all duration-300 hover:scale-105 active:scale-95">
+            <Plus className="mr-1 size-4" /> New group
           </Button>
         </div>
 
         {visibleGroups.length === 0 ? (
-          <div className="rounded-lg border border-dashed border-border bg-card p-8 text-center text-sm text-muted-foreground">
-            No groups yet.
+          <div className="rounded-2xl border border-dashed border-border/60 bg-card/50 p-8 text-center text-sm text-muted-foreground backdrop-blur-sm animate-fade-in-up">
+            <div className="mx-auto mb-3 size-14 rounded-2xl bg-gradient-soft flex items-center justify-center">
+              <UsersRound className="size-6 text-muted-foreground" />
+            </div>
+            No groups yet. Create one to start chatting!
           </div>
         ) : (
           <section className="space-y-2">
-            {visibleGroups.map((group) => {
+            {visibleGroups.map((group, index) => {
               const groupItems = groupMessages.filter((message) => message.groupId === group.id);
               const lastMessage = [...groupItems].sort((a, b) => b.createdAt - a.createdAt)[0];
               const unreadCount = groupItems.filter(
@@ -72,13 +75,14 @@ const GroupsList = () => {
                 <Link
                   key={group.id}
                   to={`/groups/${group.id}`}
-                  className="tap-lift flex items-center gap-3 rounded-lg border border-border bg-card p-3 shadow-soft"
+                  className="tap-lift flex items-center gap-3 rounded-2xl border border-border/60 bg-card/80 p-3.5 shadow-soft backdrop-blur-sm transition-all duration-300 hover:border-primary/30 hover:shadow-soft-lg"
+                  style={{ animationDelay: `${index * 50}ms` }}
                 >
                   <GroupAvatar name={group.name} />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-start justify-between gap-3">
                       <p className="truncate font-bold">{group.name}</p>
-                      <span className="shrink-0 text-xs text-muted-foreground">
+                      <span className="shrink-0 text-[11px] text-muted-foreground">
                         {lastMessage ? formatClockTime(lastMessage.createdAt, settings.timeFormat) : `${group.memberIds.length} members`}
                       </span>
                     </div>
@@ -790,9 +794,9 @@ const MessageTicks = ({
   const deliveredToAll = recipientIds.length > 0 && recipientIds.every((id) => deliveredTo.includes(id));
   const seenByAll = recipientIds.length > 0 && recipientIds.every((id) => readBy.includes(id));
 
-  if (seenByAll) return <CheckCheck className="size-3.5 text-sky-300" />;
-  if (deliveredToAll) return <CheckCheck className="size-3.5" />;
-  return <Check className="size-3.5" />;
+  if (seenByAll) return <CheckCheck className="size-3.5 text-sky-400 animate-tick-bounce" />;
+  if (deliveredToAll) return <CheckCheck className="size-3.5 text-muted-foreground/70 animate-tick-bounce" />;
+  return <Check className="size-3.5 text-muted-foreground/50" />;
 };
 
 const MessageInfoDialog = ({
@@ -974,7 +978,7 @@ const formatPresence = (status?: { active?: boolean; lastSeen?: number }, timeFo
 const UnreadBadge = ({ count }: { count: number }) => {
   if (count <= 0) return null;
   return (
-    <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-primary text-[10px] font-black text-primary-foreground shadow-sm">
+    <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-primary to-accent text-[10px] font-black text-white shadow-md animate-pop-in">
       {count > 9 ? "9+" : count}
     </span>
   );
@@ -988,9 +992,9 @@ const ReactionSummary = ({ reactions }: { reactions?: Record<string, string> }) 
   const entries = Object.entries(counts);
   if (!entries.length) return null;
   return (
-    <div className="mt-2 flex flex-wrap gap-1">
+    <div className="mt-1.5 flex flex-wrap gap-1">
       {entries.map(([reaction, count]) => (
-        <span key={reaction} className="rounded-full bg-background/80 px-2 py-0.5 text-[11px] font-bold text-foreground shadow-sm">
+        <span key={reaction} className="inline-flex items-center gap-0.5 rounded-full bg-background/90 px-2 py-0.5 text-xs font-bold text-foreground shadow-sm border border-border/40 backdrop-blur-sm animate-pop-in">
           {reaction} {count}
         </span>
       ))}
@@ -1055,20 +1059,20 @@ const MemberPicker = ({
 
 const GroupAvatar = ({ name, large = false }: { name: string; large?: boolean }) => (
   <div className={`${large ? "size-20" : "size-12"} relative shrink-0`}>
-    <div className={`absolute left-0 top-2 flex ${large ? "size-11" : "size-7"} items-center justify-center rounded-full bg-accent-soft text-accent`}>
+    <div className={`absolute left-0 top-2 flex ${large ? "size-11" : "size-7"} items-center justify-center rounded-full bg-accent/15 text-accent`}>
       <UsersRound className={large ? "size-5" : "size-3.5"} />
     </div>
-    <div className={`absolute right-0 top-2 flex ${large ? "size-11" : "size-7"} items-center justify-center rounded-full bg-success-soft text-success`}>
+    <div className={`absolute right-0 top-2 flex ${large ? "size-11" : "size-7"} items-center justify-center rounded-full bg-success/15 text-success`}>
       <UsersRound className={large ? "size-5" : "size-3.5"} />
     </div>
-    <div className={`absolute bottom-0 left-1/2 flex ${large ? "size-14" : "size-9"} -translate-x-1/2 items-center justify-center rounded-full bg-gradient-primary font-black text-primary-foreground shadow-soft`}>
+    <div className={`absolute bottom-0 left-1/2 flex ${large ? "size-14" : "size-9"} -translate-x-1/2 items-center justify-center rounded-full bg-gradient-primary font-black text-primary-foreground shadow-md`}>
       {name.charAt(0).toUpperCase()}
     </div>
   </div>
 );
 
 const PersonRow = ({ username, detail, action }: { username: string; detail: string; action?: ReactNode }) => (
-  <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-card p-3 shadow-soft">
+  <div className="flex items-center justify-between gap-3 rounded-2xl border border-border/60 bg-card/80 p-3 shadow-soft backdrop-blur-sm transition-all duration-200">
     <PersonIdentity username={username} detail={detail} />
     {action}
   </div>
@@ -1076,7 +1080,7 @@ const PersonRow = ({ username, detail, action }: { username: string; detail: str
 
 const PersonIdentity = ({ username, detail }: { username: string; detail: string }) => (
   <div className="flex min-w-0 items-center gap-3">
-    <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-accent-soft font-black text-accent">
+    <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-accent/20 to-primary/20 font-black text-accent">
       {username.charAt(0).toUpperCase()}
     </div>
     <div className="min-w-0">

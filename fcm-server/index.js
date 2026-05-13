@@ -49,11 +49,53 @@ app.get("/", (_req, res) => {
 });
 
 /**
+ * Mark all undelivered group messages for a recipient as "delivered" in Firestore.
+ * This runs server-side when a push notification is successfully sent,
+ * ensuring double-ticks appear even when the receiver's app is closed.
+ */
+async function markMessagesDelivered(recipientId) {
+  if (!db) return;
+  try {
+    const snapshot = await db
+      .collection("groupMessages")
+      .where("recipientIds", "array-contains", recipientId)
+      .get();
+
+    if (snapshot.empty) return;
+
+    const batch = db.batch();
+    let count = 0;
+    for (const doc of snapshot.docs) {
+      const data = doc.data();
+      // Skip messages sent by the recipient themselves
+      if (data.senderId === recipientId) continue;
+      const deliveredTo = data.deliveredTo || [data.senderId];
+      if (deliveredTo.includes(recipientId)) continue;
+      batch.update(doc.ref, {
+        deliveredTo: admin.firestore.FieldValue.arrayUnion(recipientId),
+        updatedAt: Date.now(),
+      });
+      count++;
+      // Firestore batches limited to 500
+      if (count >= 490) break;
+    }
+
+    if (count > 0) {
+      await batch.commit();
+      console.log(`Marked ${count} messages as delivered for ${recipientId}`);
+    }
+  } catch (err) {
+    console.error("Error marking messages delivered:", err.message);
+  }
+}
+
+/**
  * POST /api/send-notification
  * Body: { recipientId, title, body, type, link }
  *
  * Looks up the recipient's FCM tokens from Firestore and sends
  * a high-priority push notification via FCM.
+ * On success, also marks all undelivered messages as delivered.
  */
 app.post("/api/send-notification", authenticate, async (req, res) => {
   try {
@@ -129,6 +171,13 @@ app.post("/api/send-notification", authenticate, async (req, res) => {
 
     const sent = results.filter((r) => r.status === "fulfilled").length;
     console.log(`Sent ${sent}/${tokens.length} FCM pushes for ${type} to ${recipientId}`);
+
+    // If push was sent successfully, mark messages as delivered (double ticks)
+    // This ensures delivery status even when the receiver's app is closed
+    if (sent > 0 && (type === "group_message" || type === "group_reaction")) {
+      void markMessagesDelivered(recipientId);
+    }
+
     res.json({ sent, total: tokens.length });
   } catch (err) {
     console.error("Error sending notification:", err);

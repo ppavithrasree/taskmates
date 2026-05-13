@@ -2,7 +2,7 @@
 @tailwind components;
 @tailwind utilities;
 
-/* TaskMates design tokens. Colors are HSL values for Tailwind composition. */
+/* TaskMates — Premium Design System */
 
 @layer base {
   :root {
@@ -40,7 +40,7 @@
     --input: 219 30% 85%;
     --ring: 196 84% 44%;
 
-    --radius: 0.5rem;
+    --radius: 0.75rem;
 
     --gradient-primary: linear-gradient(135deg, hsl(196 84% 44%), hsl(274 82% 61%), hsl(151 64% 40%));
     --gradient-soft: linear-gradient(135deg, hsl(196 88% 93%), hsl(275 86% 95%), hsl(151 67% 93%));
@@ -49,11 +49,12 @@
       radial-gradient(44% 40% at 55% 95%, hsl(151 67% 90%) 0%, transparent 70%),
       linear-gradient(180deg, hsl(214 48% 97%), hsl(214 48% 97%));
 
-    --shadow-soft: 0 1px 2px hsl(229 34% 14% / 0.04), 0 9px 26px hsl(196 72% 38% / 0.1);
-    --shadow-soft-lg: 0 4px 10px hsl(229 34% 14% / 0.06), 0 22px 48px hsl(275 60% 45% / 0.16);
-    --shadow-glow: 0 10px 38px hsl(196 84% 44% / 0.36);
+    --shadow-soft: 0 1px 3px hsl(229 34% 14% / 0.05), 0 8px 24px hsl(196 72% 38% / 0.08);
+    --shadow-soft-lg: 0 4px 10px hsl(229 34% 14% / 0.06), 0 22px 48px hsl(275 60% 45% / 0.14);
+    --shadow-glow: 0 8px 32px hsl(196 84% 44% / 0.3);
 
     --transition-smooth: all 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+    --transition-bounce: all 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
 
     --sidebar-background: 0 0% 100%;
     --sidebar-foreground: 225 24% 13%;
@@ -68,39 +69,39 @@
   .dark {
     --background: 232 36% 9%;
     --foreground: 214 22% 95%;
-    --card: 232 30% 12%;
+    --card: 232 30% 13%;
     --card-foreground: 214 22% 95%;
-    --popover: 232 30% 12%;
+    --popover: 232 30% 13%;
     --popover-foreground: 214 22% 95%;
     --primary: 191 88% 58%;
     --primary-foreground: 232 36% 9%;
-    --primary-soft: 193 54% 18%;
+    --primary-soft: 193 54% 16%;
     --secondary: 271 28% 17%;
     --secondary-foreground: 214 22% 95%;
     --muted: 228 22% 18%;
     --muted-foreground: 215 14% 72%;
     --accent: 280 88% 72%;
     --accent-foreground: 232 36% 9%;
-    --accent-soft: 279 48% 23%;
+    --accent-soft: 279 48% 20%;
     --success: 152 70% 52%;
     --success-foreground: 232 36% 9%;
-    --success-soft: 151 40% 18%;
+    --success-soft: 151 40% 16%;
     --destructive: 0 84% 66%;
     --destructive-foreground: 0 0% 100%;
-    --border: 228 20% 23%;
-    --input: 228 20% 23%;
+    --border: 228 18% 20%;
+    --input: 228 18% 20%;
     --ring: 191 88% 58%;
 
     --gradient-primary: linear-gradient(135deg, hsl(191 88% 58%), hsl(280 88% 72%), hsl(152 70% 52%));
-    --gradient-soft: linear-gradient(135deg, hsl(193 54% 18%), hsl(279 48% 23%), hsl(151 40% 18%));
-    --gradient-mesh: radial-gradient(40% 44% at 12% 4%, hsl(193 54% 18%) 0%, transparent 64%),
-      radial-gradient(50% 46% at 90% 8%, hsl(279 48% 23%) 0%, transparent 62%),
-      radial-gradient(42% 44% at 50% 96%, hsl(151 40% 18%) 0%, transparent 70%),
+    --gradient-soft: linear-gradient(135deg, hsl(193 54% 16%), hsl(279 48% 20%), hsl(151 40% 16%));
+    --gradient-mesh: radial-gradient(40% 44% at 12% 4%, hsl(193 54% 16%) 0%, transparent 64%),
+      radial-gradient(50% 46% at 90% 8%, hsl(279 48% 20%) 0%, transparent 62%),
+      radial-gradient(42% 44% at 50% 96%, hsl(151 40% 16%) 0%, transparent 70%),
       linear-gradient(180deg, hsl(232 36% 9%), hsl(232 36% 10%));
 
-    --shadow-soft: 0 1px 2px hsl(232 36% 4% / 0.4), 0 10px 26px hsl(191 88% 58% / 0.16);
-    --shadow-soft-lg: 0 4px 10px hsl(232 36% 4% / 0.5), 0 26px 52px hsl(280 88% 72% / 0.2);
-    --shadow-glow: 0 12px 44px hsl(191 88% 58% / 0.34);
+    --shadow-soft: 0 1px 3px hsl(232 36% 4% / 0.5), 0 8px 24px hsl(191 88% 58% / 0.1);
+    --shadow-soft-lg: 0 4px 10px hsl(232 36% 4% / 0.5), 0 26px 52px hsl(280 88% 72% / 0.15);
+    --shadow-glow: 0 10px 40px hsl(191 88% 58% / 0.3);
 
     --sidebar-background: 232 34% 10%;
     --sidebar-foreground: 214 22% 95%;
@@ -122,13 +123,15 @@
     font-family: "Poppins", ui-sans-serif, system-ui, sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    scroll-behavior: smooth;
   }
 
   body {
     @apply bg-background text-foreground;
     background-image: var(--gradient-mesh);
     background-attachment: fixed;
-    transition: background-color 0.25s ease, color 0.25s ease;
+    transition: background-color 0.3s ease, color 0.3s ease;
+    overflow-x: hidden;
   }
 
   input[type="date"]::-webkit-calendar-picker-indicator,
@@ -180,6 +183,10 @@
     transition: var(--transition-smooth);
   }
 
+  .transition-bounce {
+    transition: var(--transition-bounce);
+  }
+
   .color-band {
     background-image: linear-gradient(135deg, hsl(var(--primary-soft)), hsl(var(--accent-soft)), hsl(var(--success-soft)));
   }
@@ -188,18 +195,43 @@
     background-image: linear-gradient(135deg, hsl(var(--primary-soft)), hsl(var(--accent-soft)), hsl(145 40% 16%));
   }
 
-  .tap-lift {
-    @apply transition-smooth active:scale-[0.98];
-    -webkit-tap-highlight-color: transparent;
+  /* ── Glassmorphism ────────────────────────────── */
+  .glass {
+    background: hsl(var(--card) / 0.7);
+    backdrop-filter: blur(16px) saturate(180%);
+    -webkit-backdrop-filter: blur(16px) saturate(180%);
+    border: 1px solid hsl(var(--border) / 0.5);
   }
 
+  .dark .glass {
+    background: hsl(var(--card) / 0.6);
+    backdrop-filter: blur(20px) saturate(200%);
+    -webkit-backdrop-filter: blur(20px) saturate(200%);
+    border: 1px solid hsl(var(--border) / 0.4);
+  }
+
+  /* ── Interactive elements ────────────────────── */
+  .tap-lift {
+    @apply transition-smooth;
+    -webkit-tap-highlight-color: transparent;
+    will-change: transform;
+  }
+
+  .tap-lift:active {
+    transform: scale(0.97);
+  }
+
+  /* ── Chat Bubble ─────────────────────────────── */
   .chat-bubble {
-    box-shadow: 0 1px 2px hsl(229 34% 14% / 0.08);
+    box-shadow: 0 1px 3px hsl(229 34% 14% / 0.06), 0 2px 8px hsl(229 34% 14% / 0.04);
     contain: paint;
     isolation: isolate;
-    transform: none;
-    transition: background-color 0.16s ease, color 0.16s ease, box-shadow 0.16s ease;
-    will-change: auto;
+    transition: background-color 0.16s ease, box-shadow 0.2s ease, transform 0.2s ease;
+    animation: msgSlideIn 0.25s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  .chat-bubble:active {
+    transform: scale(0.985);
   }
 
   .chat-bubble,
@@ -215,16 +247,111 @@
     word-break: break-word;
   }
 
-  /* Disable text selection on interactive elements for app-like feel */
+  /* ── Shimmer loading effect ──────────────────── */
+  .shimmer {
+    background: linear-gradient(
+      90deg,
+      hsl(var(--muted)) 25%,
+      hsl(var(--muted-foreground) / 0.1) 50%,
+      hsl(var(--muted)) 75%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 1.5s ease-in-out infinite;
+  }
+
+  /* ── Pulse dot for online status ─────────────── */
+  .pulse-dot {
+    position: relative;
+  }
+  .pulse-dot::after {
+    content: "";
+    position: absolute;
+    inset: -2px;
+    border-radius: 50%;
+    background: hsl(var(--success));
+    opacity: 0;
+    animation: pulseDot 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+
+  /* ── Disable text selection on interactive elements for app-like feel ── */
   button, a, nav, .tap-lift {
     -webkit-user-select: none;
     user-select: none;
   }
 
-  /* Remove hover effects globally — app-first, not website */
-  @media (hover: hover) {
-    .tap-lift:hover {
-      transform: none;
-    }
+  /* ── Scrollbar styling ───────────────────────── */
+  ::-webkit-scrollbar {
+    width: 4px;
+    height: 4px;
   }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: hsl(var(--muted-foreground) / 0.2);
+    border-radius: 999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--muted-foreground) / 0.35);
+  }
+}
+
+/* ── Keyframe animations ─────────────────────────────────────── */
+
+@keyframes msgSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+@keyframes pulseDot {
+  0%, 100% { opacity: 0; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(1.8); }
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-4px); }
+}
+
+@keyframes slideInRight {
+  from { opacity: 0; transform: translateX(20px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes slideInLeft {
+  from { opacity: 0; transform: translateX(-20px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes popIn {
+  from { opacity: 0; transform: scale(0.8); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes tickBounce {
+  0% { transform: scale(0.5); opacity: 0; }
+  60% { transform: scale(1.15); }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+@keyframes gradientShift {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+@keyframes ripple {
+  0% { transform: scale(0); opacity: 0.5; }
+  100% { transform: scale(4); opacity: 0; }
 }

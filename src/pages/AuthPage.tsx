@@ -13,7 +13,7 @@ interface Props {
 
 const Field = ({ label, children }: { label: string; children: ReactNode }) => (
   <div className="space-y-1.5">
-    <label className="text-xs font-bold uppercase text-muted-foreground">{label}</label>
+    <label className="text-xs font-bold uppercase tracking-wide text-muted-foreground">{label}</label>
     {children}
   </div>
 );
@@ -54,19 +54,34 @@ const AuthPage = ({ mode }: Props) => {
   };
 
   return (
-    <main className="min-h-dvh bg-gradient-soft px-4 py-8">
-      <div className="mx-auto flex min-h-[calc(100dvh-4rem)] max-w-md flex-col justify-center">
-        <div className="mb-8 flex items-center justify-center gap-2 text-2xl font-black">
-          <span className="flex size-11 items-center justify-center rounded-lg bg-gradient-primary text-primary-foreground shadow-glow">
-            <Activity className="size-5" />
-          </span>
-          TaskMates
+    <main className="relative min-h-dvh overflow-hidden bg-background px-4 py-8">
+      {/* Background decoration */}
+      <div className="pointer-events-none absolute inset-0">
+        <div className="absolute -left-20 -top-20 size-64 rounded-full bg-primary/15 blur-3xl animate-float" />
+        <div className="absolute -bottom-16 -right-16 size-56 rounded-full bg-accent/15 blur-3xl" style={{ animationDelay: "1.5s" }} />
+        <div className="absolute left-1/2 top-1/3 size-40 rounded-full bg-success/10 blur-3xl animate-float" style={{ animationDelay: "0.8s" }} />
+      </div>
+
+      <div className="relative mx-auto flex min-h-[calc(100dvh-4rem)] max-w-md flex-col justify-center">
+        {/* Logo */}
+        <div className="mb-10 flex flex-col items-center gap-3 animate-fade-in-up">
+          <div className="relative">
+            <span className="flex size-16 items-center justify-center rounded-2xl bg-gradient-primary text-primary-foreground shadow-glow">
+              <Activity className="size-7" />
+            </span>
+            <span className="absolute -inset-1 rounded-2xl bg-gradient-primary opacity-20 blur-md animate-pulse" />
+          </div>
+          <h1 className="text-3xl font-black tracking-tight">TaskMates</h1>
+          <p className="text-sm text-muted-foreground">Track your progress. Share your journey.</p>
         </div>
 
-        <section className="rounded-lg border border-border bg-card p-6 shadow-soft-lg">
-          <h1 className="text-2xl font-bold">{mode === "login" ? "Sign in" : "Create account"}</h1>
+        {/* Auth Card */}
+        <section className="rounded-2xl border border-border/60 bg-card/80 p-6 shadow-soft-lg backdrop-blur-xl animate-scale-in">
+          <h2 className="text-2xl font-black tracking-tight">{mode === "login" ? "Welcome back" : "Get started"}</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            {online ? "Firebase sync is available when configured." : "You are offline. Local mode is ready."}
+            {mode === "login"
+              ? "Sign in to continue your journey."
+              : "Create your account to start tracking."}
           </p>
 
           <form onSubmit={submit} className="mt-6 space-y-4">
@@ -75,8 +90,8 @@ const AuthPage = ({ mode }: Props) => {
                 value={username}
                 onChange={(event) => setUsername(event.target.value)}
                 autoComplete="username"
-                placeholder="John Doe"
-                className="h-11 rounded-lg bg-background"
+                placeholder="Enter your username"
+                className="h-12 rounded-xl bg-background/80 backdrop-blur-sm border-border/60 transition-all duration-200 focus:border-primary/50 focus:shadow-md"
               />
             </Field>
             <Field label="Password">
@@ -87,12 +102,12 @@ const AuthPage = ({ mode }: Props) => {
                   onChange={(event) => setPassword(event.target.value)}
                   autoComplete={mode === "login" ? "current-password" : "new-password"}
                   placeholder="Enter password"
-                  className="h-11 rounded-lg bg-background pr-10"
+                  className="h-12 rounded-xl bg-background/80 backdrop-blur-sm border-border/60 pr-10 transition-all duration-200 focus:border-primary/50 focus:shadow-md"
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
                 >
                   {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
                 </button>
@@ -107,34 +122,39 @@ const AuthPage = ({ mode }: Props) => {
                     onChange={(event) => setConfirmPassword(event.target.value)}
                     autoComplete="new-password"
                     placeholder="Confirm password"
-                    className="h-11 rounded-lg bg-background pr-10"
+                    className="h-12 rounded-xl bg-background/80 backdrop-blur-sm border-border/60 pr-10 transition-all duration-200 focus:border-primary/50 focus:shadow-md"
                   />
                   <button
                     type="button"
                     onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
                   >
                     {showConfirmPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
                   </button>
                 </div>
               </Field>
             )}
-            <Button className="h-11 w-full" type="submit" disabled={busy}>
-              {busy ? "Working..." : mode === "login" ? "Sign in" : "Create account"}
+            <Button className="h-12 w-full rounded-xl bg-gradient-primary text-base font-bold shadow-glow hover:shadow-lg transition-all duration-300 hover:scale-[1.02] active:scale-[0.98]" type="submit" disabled={busy}>
+              {busy ? (
+                <span className="flex items-center gap-2">
+                  <span className="size-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                  Working...
+                </span>
+              ) : mode === "login" ? "Sign in" : "Create account"}
             </Button>
           </form>
 
-          <p className="mt-5 text-center text-sm text-muted-foreground">
+          <p className="mt-6 text-center text-sm text-muted-foreground">
             {mode === "login" ? (
-              <>New here? <Link to="/register" className="font-semibold text-primary">Create one</Link></>
+              <>New here? <Link to="/register" className="font-bold text-primary hover:text-accent transition-colors">Create one</Link></>
             ) : (
-              <>Already logging? <Link to="/login" className="font-semibold text-primary">Sign in</Link></>
+              <>Already logging? <Link to="/login" className="font-bold text-primary hover:text-accent transition-colors">Sign in</Link></>
             )}
           </p>
         </section>
 
         {!hasFirebaseConfig && (
-          <p className="mt-5 text-center text-xs text-muted-foreground">Demo users: aria, maya, julian. Password: demo.</p>
+          <p className="mt-5 text-center text-xs text-muted-foreground animate-fade-in-up">Demo users: aria, maya, julian. Password: demo.</p>
         )}
       </div>
     </main>

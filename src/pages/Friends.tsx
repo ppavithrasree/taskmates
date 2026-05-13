@@ -37,8 +37,8 @@ const Friends = () => {
       <div className="mx-auto max-w-3xl space-y-6 px-4 py-5">
         <section className="space-y-3">
           <div className="relative">
-            <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search username..." className="h-12 rounded-lg bg-card pl-10 shadow-soft" />
+            <Search className="absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search username..." className="h-12 rounded-xl bg-card/80 pl-10 shadow-soft backdrop-blur-sm border-border/60 transition-all duration-200 focus:border-primary/50 focus:shadow-md" />
           </div>
           {query.trim() && (
             <div className="space-y-2">
@@ -158,10 +158,13 @@ const PersonRow = ({
   const Icon = meta.icon;
 
   return (
-    <div className="tap-lift flex items-center justify-between gap-3 rounded-lg border border-border bg-card p-3 shadow-soft">
+    <div className="tap-lift flex items-center justify-between gap-3 rounded-2xl border border-border/60 bg-card/80 p-3 shadow-soft backdrop-blur-sm transition-all duration-300 hover:border-primary/20 hover:shadow-soft-lg">
       <Link to={`/profile/${username}`} className="flex min-w-0 flex-1 items-center gap-3">
-        <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-accent-soft font-black text-accent">
+        <div className="relative flex size-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-accent/20 to-primary/20 font-black text-accent">
           {username.charAt(0).toUpperCase()}
+          {presence?.active && (
+            <span className="absolute -bottom-0.5 -right-0.5 size-3 rounded-full border-2 border-card bg-emerald-500" />
+          )}
         </div>
         <div className="min-w-0">
           <p className="truncate font-bold">{username}</p>
