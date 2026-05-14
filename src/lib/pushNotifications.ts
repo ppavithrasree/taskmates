@@ -169,10 +169,10 @@ export const sendFCMPush = async (
   body: string,
   type: string,
   link?: string
-): Promise<void> => {
+): Promise<boolean> => {
   if (!FCM_SERVER_URL) {
     console.warn("FCM_SERVER_URL not configured — push notification not sent");
-    return;
+    return false;
   }
 
   try {
@@ -187,9 +187,12 @@ export const sendFCMPush = async (
 
     if (!resp.ok) {
       console.error("FCM server error:", resp.status, await resp.text());
+      return false;
     }
+    return true;
   } catch (err) {
     // Silently fail — push is best-effort, local notification is the fallback
     console.warn("Failed to send FCM push (offline?):", err);
+    return false;
   }
 };

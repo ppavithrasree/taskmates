@@ -125,6 +125,7 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
     users,
     groups,
     groupMessages,
+    notifications,
     addGroupMessage,
     updateGroupMessage,
     deleteGroupMessage,
@@ -169,6 +170,24 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
     () => groupMessages.filter((item) => item.groupId === groupId).sort((a, b) => a.createdAt - b.createdAt),
     [groupMessages, groupId]
   );
+  const unreadMessageIds = useMemo(
+    () => currentUser
+      ? messages
+        .filter((item) => item.senderId !== currentUser.id && !(item.readBy ?? [item.senderId]).includes(currentUser.id))
+        .map((item) => item.id)
+        .join("|")
+      : "",
+    [currentUser, messages]
+  );
+  const unreadNotificationIds = useMemo(
+    () => currentUser
+      ? notifications
+        .filter((item) => item.recipientId === currentUser.id && item.type === "group_message" && item.link === `/groups/${groupId}` && !item.read)
+        .map((item) => item.id)
+        .join("|")
+      : "",
+    [currentUser, notifications, groupId]
+  );
   const selectedMessage = messages.find((item) => item.id === selectedMessageId);
   const actionMessage = messages.find((item) => item.id === actionMessageId);
   const editingMessage = messages.find((item) => item.id === editingMessageId);
@@ -187,15 +206,12 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
     return () => setActiveGroupChat(null);
   }, [groupId, setActiveGroupChat]);
 
-  const lastReadCountRef = useRef<number>(0);
   useEffect(() => {
     if (!currentUser || !group || !isMember) return;
-    // Only re-run when new messages arrive, not when delivery/read status changes
-    if (messages.length === lastReadCountRef.current) return;
-    lastReadCountRef.current = messages.length;
+    if (!unreadMessageIds && !unreadNotificationIds) return;
     markGroupMessagesRead(group.id);
     markGroupNotificationsRead(group.id);
-  }, [currentUser, group, isMember, markGroupMessagesRead, markGroupNotificationsRead, messages.length]);
+  }, [currentUser, group, isMember, markGroupMessagesRead, markGroupNotificationsRead, unreadMessageIds, unreadNotificationIds]);
 
   useEffect(() => {
     if (!currentUserDraftId || !groupDraftId) return;
@@ -794,9 +810,9 @@ const MessageTicks = ({
   const deliveredToAll = recipientIds.length > 0 && recipientIds.every((id) => deliveredTo.includes(id));
   const seenByAll = recipientIds.length > 0 && recipientIds.every((id) => readBy.includes(id));
 
-  if (seenByAll) return <CheckCheck className="size-3.5 text-sky-400 animate-tick-bounce" />;
-  if (deliveredToAll) return <CheckCheck className="size-3.5 text-muted-foreground/70 animate-tick-bounce" />;
-  return <Check className="size-3.5 text-muted-foreground/50" />;
+  if (seenByAll) return <CheckCheck className="size-3.5 stroke-[3] text-[#60a5fa] dark:text-[#2563eb] animate-tick-bounce" />;
+  if (deliveredToAll) return <CheckCheck className="size-3.5 text-white/90 dark:text-emerald-950/90 animate-tick-bounce" />;
+  return <Check className="size-3.5 text-white/75 dark:text-emerald-950/75" />;
 };
 
 const MessageInfoDialog = ({

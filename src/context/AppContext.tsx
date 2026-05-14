@@ -379,6 +379,17 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     else localStorage.removeItem(SESSION_KEY);
   }, [currentUserId]);
   useEffect(() => {
+    const cache = loadLastSeenCache();
+    let changed = false;
+    for (const user of state.users) {
+      if (user.lastSeen && cache[user.id] !== user.lastSeen) {
+        cache[user.id] = user.lastSeen;
+        changed = true;
+      }
+    }
+    if (changed) saveLastSeenCache(cache);
+  }, [state.users]);
+  useEffect(() => {
     document.documentElement.classList.toggle("dark", state.settings.theme === "dark");
   }, [state.settings.theme]);
 
@@ -443,6 +454,37 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       window.removeEventListener("offline", onOffline);
     };
   }, []);
+
+  useEffect(() => {
+    if (!currentUser) return;
+    let lastSavedAt = 0;
+    const saveLastSeen = () => {
+      const now = Date.now();
+      if (now - lastSavedAt < 5000) return;
+      lastSavedAt = now;
+      const updated = { ...currentUser, lastSeen: now, updatedAt: now };
+      const cache = loadLastSeenCache();
+      cache[currentUser.id] = now;
+      saveLastSeenCache(cache);
+      setState((snapshot) => ({
+        ...snapshot,
+        users: snapshot.users.map((user) => user.id === currentUser.id ? updated : user),
+      }));
+      commitOperation(queueFor("users", "upsert", updated.id, updated));
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "hidden") saveLastSeen();
+    };
+    const onOffline = () => saveLastSeen();
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    window.addEventListener("pagehide", saveLastSeen);
+    window.addEventListener("offline", onOffline);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.removeEventListener("pagehide", saveLastSeen);
+      window.removeEventListener("offline", onOffline);
+    };
+  }, [currentUser, commitOperation]);
 
   // Flush sync queue when online
   useEffect(() => {
@@ -673,10 +715,10 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
 
   // Helper to create and push a notification to Firebase
   const createNotification = useCallback(
-    (recipientId: string, type: AppNotification["type"], title: string, body: string, link?: string) => {
-      if (!currentUser || recipientId === currentUser.id) return;
+    async (recipientId: string, type: AppNotification["type"], title: string, body: string, link?: string) => {
+      if (!currentUser || recipientId === currentUser.id) return false;
       const recipient = state.users.find((user) => user.id === recipientId);
-      if (recipient?.notificationsEnabled === false) return;
+      if (recipient?.notificationsEnabled === false) return false;
       const now = Date.now();
       const notif: AppNotification = {
         id: uid("notif"),
@@ -696,7 +738,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       commitOperation(queueFor("notifications", "upsert", notif.id, notif));
       
       // Trigger free FCM push notification to the recipient
-      void sendFCMPush(recipientId, title, body, type, link);
+      return sendFCMPush(recipientId, title, body, type, link);
     },
     [currentUser, state.users, commitOperation]
   );
@@ -1144,20 +1186,33 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     commitOperation(queueFor("groupMessages", "upsert", message.id, message));
     commitOperation(queueFor("groups", "upsert", updatedGroup.id, updatedGroup));
 
-    // Notify all group members except sender (skip muted users)
-    for (const memberId of group.memberIds) {
-      if (memberId === currentUser.id) continue;
-      const member = state.users.find((u) => u.id === memberId);
-      const isMuted = member?.mutedGroupIds?.includes(groupId) ?? false;
-      if (!isMuted) {
-        createNotification(
+    // Notify all group members except sender (skip muted users). If FCM accepts
+    // the push, count that handoff as delivered even while the recipient app is backgrounded.
+    const pushDeliveredIds = (
+      await Promise.all(group.memberIds.map(async (memberId) => {
+        if (memberId === currentUser.id) return null;
+        const member = state.users.find((u) => u.id === memberId);
+        const isMuted = member?.mutedGroupIds?.includes(groupId) ?? false;
+        if (isMuted) return null;
+        const pushed = await createNotification(
           memberId,
           "group_message",
           group.name,
           `${currentUser.username}: ${clean}`,
           `/groups/${groupId}`
         );
-      }
+        return pushed ? memberId : null;
+      }))
+    ).filter((id): id is string => Boolean(id));
+
+    if (pushDeliveredIds.length > 0) {
+      const deliveredTo = mergeIds(message.deliveredTo, pushDeliveredIds);
+      const deliveredMessage = { ...message, deliveredTo, updatedAt: Date.now(), dirty: true };
+      setState((snapshot) => ({
+        ...snapshot,
+        groupMessages: snapshot.groupMessages.map((item) => item.id === message.id ? deliveredMessage : item),
+      }));
+      commitOperation(queueFor("groupMessages", "upsert", deliveredMessage.id, deliveredMessage));
     }
     return { ok: true };
   };
@@ -1732,7 +1787,8 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
           const lastSeenCache = loadLastSeenCache();
           let cacheChanged = false;
           for (const item of items) {
-            const cachedLastSeen = item.lastSeen ?? lastSeenCache[item.userId];
+            const userLastSeen = stateRef.current.users.find((user) => user.id === item.userId)?.lastSeen;
+            const cachedLastSeen = item.lastSeen ?? lastSeenCache[item.userId] ?? userLastSeen;
             next[item.userId] = { ...item, lastSeen: cachedLastSeen };
             if (cachedLastSeen && lastSeenCache[item.userId] !== cachedLastSeen) {
               lastSeenCache[item.userId] = cachedLastSeen;
