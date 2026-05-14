@@ -715,7 +715,14 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
 
   // Helper to create and push a notification to Firebase
   const createNotification = useCallback(
-    async (recipientId: string, type: AppNotification["type"], title: string, body: string, link?: string) => {
+    async (
+      recipientId: string,
+      type: AppNotification["type"],
+      title: string,
+      body: string,
+      link?: string,
+      pushData?: Record<string, string>
+    ) => {
       if (!currentUser || recipientId === currentUser.id) return false;
       const recipient = state.users.find((user) => user.id === recipientId);
       if (recipient?.notificationsEnabled === false) return false;
@@ -738,7 +745,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       commitOperation(queueFor("notifications", "upsert", notif.id, notif));
       
       // Trigger free FCM push notification to the recipient
-      return sendFCMPush(recipientId, title, body, type, link);
+      return sendFCMPush(recipientId, title, body, type, link, pushData);
     },
     [currentUser, state.users, commitOperation]
   );
@@ -1186,8 +1193,8 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     commitOperation(queueFor("groupMessages", "upsert", message.id, message));
     commitOperation(queueFor("groups", "upsert", updatedGroup.id, updatedGroup));
 
-    // Notify all group members except sender (skip muted users). Delivery receipts
-    // are written only by the recipient device after it actually syncs the message.
+    // Notify all group members except sender (skip muted users). Android writes
+    // delivery receipts as soon as the push reaches the recipient device.
     await Promise.all(
       group.memberIds.map(async (memberId) => {
         if (memberId === currentUser.id) return;
@@ -1199,7 +1206,8 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
           "group_message",
           group.name,
           `${currentUser.username}: ${clean}`,
-          `/groups/${groupId}`
+          `/groups/${groupId}`,
+          { messageId: message.id }
         );
       })
     );

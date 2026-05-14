@@ -50,12 +50,12 @@ app.get("/", (_req, res) => {
 
 /**
  * POST /api/send-notification
- * Body: { recipientId, title, body, type, link }
+ * Body: { recipientId, title, body, type, link, data }
  *
  * Looks up the recipient's FCM tokens from Firestore and sends
  * a high-priority push notification via FCM.
- * Delivery receipts are written by the recipient app after it actually
- * syncs the message, not by this push handoff.
+ * Delivery receipts are written by Android when the push actually reaches
+ * the recipient device, not by this push handoff.
  */
 app.post("/api/send-notification", authenticate, async (req, res) => {
   try {
@@ -63,7 +63,7 @@ app.post("/api/send-notification", authenticate, async (req, res) => {
       return res.status(500).json({ error: "Firebase Admin is not configured. Check FIREBASE_SERVICE_ACCOUNT." });
     }
 
-    const { recipientId, title, body, type, link } = req.body;
+    const { recipientId, title, body, type, link, data } = req.body;
 
     if (!recipientId || !title || !body) {
       return res.status(400).json({ error: "Missing recipientId, title, or body" });
@@ -98,21 +98,16 @@ app.post("/api/send-notification", authenticate, async (req, res) => {
         messaging
           .send({
             token,
-            notification: { title, body },
             data: {
               type: type || "general",
               link: link || "",
+              title,
+              body,
+              recipientId,
+              ...(data && typeof data === "object" ? data : {}),
             },
             android: {
               priority: "high",
-              notification: {
-                channelId: "taskmates_alerts_v2",
-                icon: "ic_stat_taskmates",
-                priority: "max",
-                defaultSound: true,
-                defaultVibrateTimings: true,
-                visibility: "PUBLIC",
-              },
             },
           })
           .catch((err) => {
@@ -136,6 +131,44 @@ app.post("/api/send-notification", authenticate, async (req, res) => {
   } catch (err) {
     console.error("Error sending notification:", err);
     res.status(500).json({ error: "Failed to send notification" });
+  }
+});
+
+/**
+ * POST /api/mark-message-delivered
+ * Body: { messageId, recipientId }
+ *
+ * Called by Android only after FCM delivers a group-message push to the device.
+ */
+app.post("/api/mark-message-delivered", authenticate, async (req, res) => {
+  try {
+    if (!db) {
+      return res.status(500).json({ error: "Firebase Admin is not configured. Check FIREBASE_SERVICE_ACCOUNT." });
+    }
+
+    const { messageId, recipientId } = req.body;
+    if (!messageId || !recipientId) {
+      return res.status(400).json({ error: "Missing messageId or recipientId" });
+    }
+
+    const messageRef = db.collection("groupMessages").doc(messageId);
+    const snap = await messageRef.get();
+    if (!snap.exists) return res.status(404).json({ error: "Message not found" });
+
+    const message = snap.data() || {};
+    if (!Array.isArray(message.recipientIds) || !message.recipientIds.includes(recipientId)) {
+      return res.status(403).json({ error: "Recipient is not allowed for this message" });
+    }
+
+    await messageRef.set({
+      deliveredTo: admin.firestore.FieldValue.arrayUnion(recipientId),
+      updatedAt: Date.now(),
+    }, { merge: true });
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("Error marking message delivered:", err);
+    res.status(500).json({ error: "Failed to mark message delivered" });
   }
 });
 

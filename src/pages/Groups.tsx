@@ -1,6 +1,6 @@
 import { FormEvent, ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, Bell, BellOff, Check, CheckCheck, Edit3, Info, LogOut, MoreVertical, Pencil, Pin, PinOff, Plus, Reply, Send, Trash2, UserPlus, UsersRound, X } from "lucide-react";
+import { ArrowLeft, Bell, BellOff, Check, Edit3, Info, LogOut, MoreVertical, Pencil, Pin, PinOff, Plus, Reply, Send, Trash2, UserPlus, UsersRound, X } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/components/layout/AppShell";
 import { useApp } from "@/context/AppContext";
@@ -818,10 +818,17 @@ const MessageTicks = ({
   const deliveredToAll = recipientIds.length > 0 && recipientIds.every((id) => deliveredTo.includes(id));
   const seenByAll = recipientIds.length > 0 && recipientIds.every((id) => readBy.includes(id));
 
-  if (seenByAll) return <CheckCheck className="size-3.5 stroke-[3] text-[#60a5fa] dark:text-[#2563eb] animate-tick-bounce" />;
-  if (deliveredToAll) return <CheckCheck className="size-3.5 text-white/90 dark:text-emerald-950/90 animate-tick-bounce" />;
+  if (seenByAll) return <DoubleTick className="size-3.5 text-[#60a5fa] dark:text-[#2563eb] animate-tick-bounce" strokeWidth={3} />;
+  if (deliveredToAll) return <DoubleTick className="size-3.5 text-white/90 dark:text-emerald-950/90 animate-tick-bounce" />;
   return <Check className="size-3.5 text-white/75 dark:text-emerald-950/75" />;
 };
+
+const DoubleTick = ({ className, strokeWidth = 2 }: { className?: string; strokeWidth?: number }) => (
+  <svg viewBox="0 0 18 18" fill="none" className={className} aria-hidden="true">
+    <path d="M2.25 9.5 5.5 12.75 11.25 6.25" stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M6.75 9.5 10 12.75 15.75 6.25" stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
 
 const MessageInfoDialog = ({
   message,

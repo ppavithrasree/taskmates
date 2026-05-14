@@ -141,10 +141,12 @@ export const initFCMPush = async (
 
     // Push received while app is in foreground
     listenerHandles.push(await mod.PushNotifications.addListener("pushNotificationReceived", (notif: unknown) => {
-      const n = notif as { title?: string; body?: string; data?: { type?: string; link?: string } };
+      const n = notif as { title?: string; body?: string; data?: { type?: string; link?: string; title?: string; body?: string } };
       if ((n.data?.type === "group_message" || n.data?.type === "group_reaction") && n.data.link === activePath) return;
-      if (n.title && n.body && onForegroundPush) {
-        onForegroundPush(n.title, n.body, n.data);
+      const title = n.title ?? n.data?.title;
+      const body = n.body ?? n.data?.body;
+      if (title && body && onForegroundPush) {
+        onForegroundPush(title, body, n.data);
       }
     }));
 
@@ -168,7 +170,8 @@ export const sendFCMPush = async (
   title: string,
   body: string,
   type: string,
-  link?: string
+  link?: string,
+  extraData?: Record<string, string>
 ): Promise<boolean> => {
   if (!FCM_SERVER_URL) {
     console.warn("FCM_SERVER_URL not configured — push notification not sent");
@@ -182,7 +185,7 @@ export const sendFCMPush = async (
     const resp = await fetch(`${FCM_SERVER_URL}/api/send-notification`, {
       method: "POST",
       headers,
-      body: JSON.stringify({ recipientId, title, body, type, link }),
+      body: JSON.stringify({ recipientId, title, body, type, link, data: extraData }),
     });
 
     if (!resp.ok) {
