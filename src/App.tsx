@@ -22,7 +22,9 @@ import NotFound from "./pages/NotFound.tsx";
 
 const queryClient = new QueryClient();
 
-const backTargetFor = (pathname: string) => {
+const backTargetFor = (path: string) => {
+  const [pathname, search = ""] = path.split("?");
+  if (pathname === "/dashboard" && search) return "/dashboard";
   if (/^\/groups\/[^/]+(?:\/info)?$/.test(pathname)) return "/groups";
   if (
     pathname === "/friends" ||
@@ -52,17 +54,17 @@ const BackRouteController = () => {
   };
 
   useEffect(() => {
-    pathRef.current = location.pathname;
+    pathRef.current = `${location.pathname}${location.search}`;
     setActivePushPath(location.pathname);
-  }, [location.pathname]);
+  }, [location.pathname, location.search]);
 
   useEffect(() => {
     if (navigationType !== "POP") return;
-    const target = backTargetFor(location.pathname);
-    if (target && location.pathname !== target) {
+    const target = backTargetFor(`${location.pathname}${location.search}`);
+    if (target && `${location.pathname}${location.search}` !== target) {
       navigate(target, { replace: true });
     }
-  }, [location.pathname, navigationType, navigate]);
+  }, [location.pathname, location.search, navigationType, navigate]);
 
   useEffect(() => {
     setPushNotificationNavigationHandler((path) => navigate(path || "/dashboard"));
@@ -75,7 +77,7 @@ const BackRouteController = () => {
       const target = backTargetFor(pathRef.current);
       if (!target) return;
       window.setTimeout(() => {
-        if (window.location.pathname !== target) navigate(target, { replace: true });
+        if (`${window.location.pathname}${window.location.search}` !== target) navigate(target, { replace: true });
       }, 0);
     };
 

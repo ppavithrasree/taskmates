@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { ArrowLeft, CalendarDays, Clock3, Plus } from "lucide-react";
 import { AppShell } from "@/components/layout/AppShell";
 import { PostCard } from "@/features/posts/PostCard";
@@ -13,10 +14,11 @@ import type { Post, User } from "@/types";
 
 const Dashboard = () => {
   const { currentUser, users, posts, settings, visibleFeedPosts, markNotificationsForLinkRead, presenceByUserId } = useApp();
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [open, setOpen] = useState(false);
-  const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const logHistoryRef = useRef(false);
-  const selectedUserHistoryRef = useRef(false);
+  const selectedUserId = searchParams.get("feedUser");
   const myPosts = useMemo(
     () => currentUser ? posts.filter((post) => post.userId === currentUser.id && !post.deletedAt) : [],
     [currentUser, posts]
@@ -51,11 +53,6 @@ const Dashboard = () => {
 
   useEffect(() => {
     const onPopState = () => {
-      if (selectedUserHistoryRef.current) {
-        selectedUserHistoryRef.current = false;
-        setSelectedUserId(null);
-        return;
-      }
       if (!logHistoryRef.current) return;
       logHistoryRef.current = false;
       setOpen(false);
@@ -74,21 +71,11 @@ const Dashboard = () => {
   };
 
   const openUserFeed = (userId: string) => {
-    if (!selectedUserHistoryRef.current) {
-      window.history.pushState({ ...window.history.state, taskmatesFeedUser: userId }, "", window.location.href);
-      selectedUserHistoryRef.current = true;
-    }
-    setSelectedUserId(userId);
+    navigate(`/dashboard?feedUser=${encodeURIComponent(userId)}`);
   };
 
   const closeUserFeed = () => {
-    if (selectedUserHistoryRef.current) {
-      selectedUserHistoryRef.current = false;
-      window.history.back();
-      setSelectedUserId(null);
-      return;
-    }
-    setSelectedUserId(null);
+    navigate("/dashboard");
   };
 
   if (!currentUser) return null;
@@ -105,7 +92,7 @@ const Dashboard = () => {
               <p className="text-sm font-medium text-muted-foreground">Welcome back</p>
               <h2 className="text-2xl font-black tracking-tight bg-gradient-to-r from-primary via-accent to-success bg-clip-text text-transparent">{currentUser.username}</h2>
             </div>
-            <Button onClick={() => setOpen(true)} className="h-11 shrink-0 rounded-xl bg-gradient-primary shadow-glow hover:shadow-lg transition-all duration-300 hover:scale-105 active:scale-95">
+            <Button onClick={() => setOpen(true)} className="h-11 shrink-0 rounded-xl bg-gradient-primary shadow-glow">
               <Plus className="mr-1 size-4" /> Log
             </Button>
           </div>
@@ -195,7 +182,7 @@ const LatestUserPost = ({ post, author, presence, timeFormat, onOpen }: { post: 
   <button
     type="button"
     onClick={onOpen}
-    className="group tap-lift flex w-full items-start gap-3 rounded-2xl border border-border/60 bg-card/80 p-4 text-left shadow-soft backdrop-blur-sm transition-all duration-300 hover:border-primary/30 hover:shadow-soft-lg active:scale-[0.98]"
+    className="flex w-full items-start gap-3 rounded-2xl border border-border/60 bg-card/80 p-4 text-left shadow-soft backdrop-blur-sm"
   >
     <div className="relative flex size-12 shrink-0 items-center justify-center rounded-xl bg-gradient-primary font-bold text-primary-foreground text-lg shadow-md">
       {author?.username.charAt(0).toUpperCase() ?? "?"}
@@ -216,7 +203,7 @@ const LatestUserPost = ({ post, author, presence, timeFormat, onOpen }: { post: 
         {formatTimeRange(post.startTime, post.endTime, timeFormat)}
       </div>
       <p className="line-clamp-2 whitespace-pre-wrap text-sm leading-relaxed text-foreground/80">{post.content}</p>
-      <p className="text-xs font-bold text-primary group-hover:text-accent transition-colors duration-200">View all posts →</p>
+      <p className="text-xs font-bold text-primary">View all posts →</p>
     </div>
   </button>
 );

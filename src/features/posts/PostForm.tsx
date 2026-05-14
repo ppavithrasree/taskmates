@@ -1,6 +1,6 @@
 import { ReactNode, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { CalendarDays, Clock3 } from "lucide-react";
+import { CalendarDays, ChevronDown, Clock3 } from "lucide-react";
 import type { Post, Visibility } from "@/types";
 import { useApp } from "@/context/AppContext";
 import { Button } from "@/components/ui/button";
@@ -178,29 +178,58 @@ const TimeGrid = ({
       <Clock3 className="size-3.5 text-accent" />
       {label}
     </p>
-    <div className={timeFormat === "12" ? "grid grid-cols-6 gap-2" : "grid grid-cols-5 gap-2"}>
-      <PartInput label="Date" value={parts.date} onChange={(value) => onChange("date", value)} min={1} max={31} />
-      <PartInput label="Month" value={parts.month} onChange={(value) => onChange("month", value)} min={1} max={12} />
-      <PartInput label="Year" value={parts.year} onChange={(value) => onChange("year", value)} min={1970} max={9999} className="col-span-1" />
-      <PartInput label="Hour" value={parts.hour} onChange={(value) => onChange("hour", value)} min={timeFormat === "12" ? 1 : 0} max={timeFormat === "12" ? 12 : 23} />
-      <PartInput label="Minute" value={parts.minute} onChange={(value) => onChange("minute", value)} min={0} max={59} />
-      {timeFormat === "12" && (
-        <label>
-          <span className="mb-1 block text-center text-[10px] font-black uppercase text-muted-foreground">AM/PM</span>
-          <Select value={parts.period} onValueChange={(value) => onChange("period", value)}>
-            <SelectTrigger className="h-12 rounded-lg bg-background px-1 text-center text-sm font-black uppercase tabular-nums">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="am">am</SelectItem>
-              <SelectItem value="pm">pm</SelectItem>
-            </SelectContent>
-          </Select>
-        </label>
-      )}
+    <div className="space-y-2">
+      <div className="grid grid-cols-[1fr_1fr_1.45fr] gap-2">
+        <PartInput label="Date" value={parts.date} onChange={(value) => onChange("date", value)} min={1} max={31} />
+        <PartInput label="Month" value={parts.month} onChange={(value) => onChange("month", value)} min={1} max={12} />
+        <PartInput label="Year" value={parts.year} onChange={(value) => onChange("year", value)} min={1970} max={9999} />
+      </div>
+      <div className={timeFormat === "12" ? "grid grid-cols-3 gap-2" : "grid grid-cols-2 gap-2"}>
+        <PartInput label="Hour" value={parts.hour} onChange={(value) => onChange("hour", value)} min={timeFormat === "12" ? 1 : 0} max={timeFormat === "12" ? 12 : 23} />
+        <PartInput label="Minute" value={parts.minute} onChange={(value) => onChange("minute", value)} min={0} max={59} />
+        {timeFormat === "12" && <PeriodDropdown value={parts.period} onChange={(value) => onChange("period", value)} />}
+      </div>
     </div>
   </section>
 );
+
+const PeriodDropdown = ({ value, onChange }: { value: "am" | "pm"; onChange: (value: "am" | "pm") => void }) => {
+  const [open, setOpen] = useState(false);
+  const choose = (next: "am" | "pm") => {
+    onChange(next);
+    setOpen(false);
+  };
+
+  return (
+    <label className="relative">
+      <span className="mb-1 block text-center text-[10px] font-black uppercase text-muted-foreground">AM/PM</span>
+      <button
+        type="button"
+        onPointerDown={(event) => event.preventDefault()}
+        onClick={() => setOpen((current) => !current)}
+        className="relative flex h-12 w-full items-center justify-center rounded-lg border border-input bg-background px-2 pr-7 text-sm font-black uppercase tabular-nums ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 sm:text-base"
+      >
+        {value}
+        <ChevronDown className="absolute right-2 top-2 size-3.5 text-muted-foreground" />
+      </button>
+      {open && (
+        <div className="absolute left-0 right-0 top-[calc(100%+0.25rem)] z-50 overflow-hidden rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-md">
+          {(["am", "pm"] as const).map((option) => (
+            <button
+              key={option}
+              type="button"
+              onPointerDown={(event) => event.preventDefault()}
+              onClick={() => choose(option)}
+              className={`block h-9 w-full rounded-md text-center text-sm font-black uppercase ${option === value ? "bg-primary-soft text-primary" : ""}`}
+            >
+              {option}
+            </button>
+          ))}
+        </div>
+      )}
+    </label>
+  );
+};
 
 const PartInput = ({
   label,
@@ -225,7 +254,7 @@ const PartInput = ({
       min={min}
       max={max}
       onChange={(event) => onChange(event.target.value)}
-      className="h-12 rounded-lg bg-background px-1 text-center text-sm font-black tabular-nums sm:text-base"
+      className="h-12 rounded-lg bg-background px-2 text-center text-sm font-black tabular-nums sm:text-base"
     />
   </label>
 );

@@ -50,7 +50,7 @@ const GroupsList = () => {
       <div className="mx-auto max-w-3xl space-y-5 px-4 py-5">
         <div className="flex items-center justify-between gap-3">
           <h1 className="text-2xl font-black tracking-tight">Groups</h1>
-          <Button onClick={() => setCreateOpen(true)} className="h-10 shrink-0 rounded-xl bg-gradient-primary shadow-md hover:shadow-lg transition-all duration-300 hover:scale-105 active:scale-95">
+          <Button onClick={() => setCreateOpen(true)} className="h-10 shrink-0 rounded-xl bg-gradient-primary shadow-md">
             <Plus className="mr-1 size-4" /> New group
           </Button>
         </div>
@@ -75,7 +75,7 @@ const GroupsList = () => {
                 <Link
                   key={group.id}
                   to={`/groups/${group.id}`}
-                  className="tap-lift flex items-center gap-3 rounded-2xl border border-border/60 bg-card/80 p-3.5 shadow-soft backdrop-blur-sm transition-all duration-300 hover:border-primary/30 hover:shadow-soft-lg"
+                  className="flex items-center gap-3 rounded-2xl border border-border/60 bg-card/80 p-3.5 shadow-soft backdrop-blur-sm"
                   style={{ animationDelay: `${index * 50}ms` }}
                 >
                   <GroupAvatar name={group.name} />
@@ -349,14 +349,22 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
 
   const sendMessage = async (event: FormEvent) => {
     event.preventDefault();
-    emitTyping(group.id, false);
-    const result = await addGroupMessage(group.id, message, replyToMessage?.id);
-    if (!result.ok) {
-      toast.error(result.error);
+    const outgoing = message.trim();
+    if (!outgoing) {
+      toast.error("Type a message first.");
       return;
     }
+    const replyId = replyToMessage?.id;
+    emitTyping(group.id, false);
     setMessage("");
     setReplyToMessageId(null);
+    const result = await addGroupMessage(group.id, outgoing, replyId);
+    if (!result.ok) {
+      toast.error(result.error);
+      setMessage(outgoing);
+      setReplyToMessageId(replyId ?? null);
+      return;
+    }
     window.requestAnimationFrame(() => {
       composerRef.current?.focus();
       const list = messagesRef.current;
@@ -714,7 +722,7 @@ const GroupInfo = ({ groupId }: { groupId: string }) => {
           </div>
         </header>
 
-        <section className="space-y-4 rounded-lg border border-border bg-card p-4 text-center shadow-soft">
+        <section className="flex flex-col items-center space-y-4 rounded-lg border border-border bg-card p-4 text-center shadow-soft">
           <GroupAvatar name={group.name} large />
           {editingName ? (
             <form onSubmit={saveName} className="space-y-3">
@@ -726,8 +734,8 @@ const GroupInfo = ({ groupId }: { groupId: string }) => {
             </form>
           ) : (
             <div className="space-y-3">
-              <div className="min-w-0">
-                <h2 className="break-words text-xl font-black">{group.name}</h2>
+              <div className="min-w-0 max-w-full">
+                <h2 className="break-words [overflow-wrap:anywhere] text-xl font-black leading-tight">{group.name}</h2>
                 <p className="text-sm text-muted-foreground">{members.length} members</p>
               </div>
               <Button variant="outline" onClick={startEditingName}>
@@ -761,7 +769,7 @@ const GroupInfo = ({ groupId }: { groupId: string }) => {
         <button
           type="button"
           onClick={() => { toggleMuteGroup(group.id); toast.success(isGroupMuted(group.id) ? "Notifications unmuted." : "Notifications muted."); }}
-          className="flex w-full items-center justify-between gap-3 rounded-lg border border-border bg-card p-3 shadow-soft transition-smooth"
+          className="flex w-full items-center justify-between gap-3 rounded-lg border border-border bg-card p-3 shadow-soft"
         >
           <div className="flex items-center gap-3">
             {isGroupMuted(group.id) ? <BellOff className="size-4 text-muted-foreground" /> : <Bell className="size-4 text-primary" />}
@@ -918,7 +926,7 @@ const MessageActionsDialog = ({
           </div>
           <div className="flex items-center gap-2 rounded-full border border-border bg-card p-2 shadow-soft">
             {DEFAULT_REACTIONS.map((reaction) => (
-              <button key={reaction} type="button" className="flex size-10 items-center justify-center rounded-full text-xl hover:bg-primary-soft" onClick={() => react(reaction)}>
+              <button key={reaction} type="button" className="flex size-10 items-center justify-center rounded-full text-xl" onClick={() => react(reaction)}>
                 {reaction}
               </button>
             ))}
@@ -937,7 +945,7 @@ const MessageActionsDialog = ({
               />
               <div className="grid grid-cols-8 gap-1">
                 {MORE_REACTIONS.map((reaction) => (
-                  <button key={reaction} type="button" className="rounded-lg p-2 text-xl hover:bg-primary-soft" onClick={() => react(reaction)}>
+                  <button key={reaction} type="button" className="rounded-lg p-2 text-xl" onClick={() => react(reaction)}>
                     {reaction}
                   </button>
                 ))}
@@ -1059,7 +1067,7 @@ const MemberPicker = ({
           key={user.id}
           type="button"
           onClick={() => onToggle(user.id)}
-          className={`flex w-full items-center justify-between gap-3 rounded-lg border p-3 text-left shadow-soft transition-smooth ${selectedIds.includes(user.id) ? "border-primary bg-primary-soft" : "border-border bg-card"
+          className={`flex w-full items-center justify-between gap-3 rounded-lg border p-3 text-left shadow-soft ${selectedIds.includes(user.id) ? "border-primary bg-primary-soft" : "border-border bg-card"
             }`}
         >
           <PersonIdentity username={user.username} detail="Connection" />
@@ -1088,7 +1096,7 @@ const GroupAvatar = ({ name, large = false }: { name: string; large?: boolean })
 );
 
 const PersonRow = ({ username, detail, action }: { username: string; detail: string; action?: ReactNode }) => (
-  <div className="flex items-center justify-between gap-3 rounded-2xl border border-border/60 bg-card/80 p-3 shadow-soft backdrop-blur-sm transition-all duration-200">
+  <div className="flex items-center justify-between gap-3 rounded-2xl border border-border/60 bg-card/80 p-3 shadow-soft backdrop-blur-sm">
     <PersonIdentity username={username} detail={detail} />
     {action}
   </div>

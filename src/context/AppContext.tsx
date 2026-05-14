@@ -1186,34 +1186,23 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     commitOperation(queueFor("groupMessages", "upsert", message.id, message));
     commitOperation(queueFor("groups", "upsert", updatedGroup.id, updatedGroup));
 
-    // Notify all group members except sender (skip muted users). If FCM accepts
-    // the push, count that handoff as delivered even while the recipient app is backgrounded.
-    const pushDeliveredIds = (
-      await Promise.all(group.memberIds.map(async (memberId) => {
-        if (memberId === currentUser.id) return null;
+    // Notify all group members except sender (skip muted users). Delivery receipts
+    // are written only by the recipient device after it actually syncs the message.
+    await Promise.all(
+      group.memberIds.map(async (memberId) => {
+        if (memberId === currentUser.id) return;
         const member = state.users.find((u) => u.id === memberId);
         const isMuted = member?.mutedGroupIds?.includes(groupId) ?? false;
-        if (isMuted) return null;
-        const pushed = await createNotification(
+        if (isMuted) return;
+        await createNotification(
           memberId,
           "group_message",
           group.name,
           `${currentUser.username}: ${clean}`,
           `/groups/${groupId}`
         );
-        return pushed ? memberId : null;
-      }))
-    ).filter((id): id is string => Boolean(id));
-
-    if (pushDeliveredIds.length > 0) {
-      const deliveredTo = mergeIds(message.deliveredTo, pushDeliveredIds);
-      const deliveredMessage = { ...message, deliveredTo, updatedAt: Date.now(), dirty: true };
-      setState((snapshot) => ({
-        ...snapshot,
-        groupMessages: snapshot.groupMessages.map((item) => item.id === message.id ? deliveredMessage : item),
-      }));
-      commitOperation(queueFor("groupMessages", "upsert", deliveredMessage.id, deliveredMessage));
-    }
+      })
+    );
     return { ok: true };
   };
 
@@ -1381,28 +1370,22 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     const snap = stateRef.current;
     const user = snap.users.find((u) => u.id === currentUserId);
     if (!user) return;
-    const now = Date.now();
-    const changedNotifications = snap.notifications.flatMap((notification) => {
-      if (
-        notification.recipientId !== user.id ||
-        notification.type !== "group_message" ||
-        notification.link !== `/groups/${groupId}` ||
-        notification.read
-      ) {
-        return [];
-      }
-      return [{ ...notification, read: true, updatedAt: now }];
-    });
+    const notificationsToDelete = snap.notifications.filter(
+      (notification) =>
+        notification.recipientId === user.id &&
+        notification.type === "group_message" &&
+        notification.link === `/groups/${groupId}`
+    );
 
-    if (changedNotifications.length === 0) return;
-    const changedById = new Map(changedNotifications.map((notification) => [notification.id, notification]));
+    if (notificationsToDelete.length === 0) return;
+    const deleteIds = new Set(notificationsToDelete.map((notification) => notification.id));
     setState((snapshot) => ({
       ...snapshot,
-      notifications: snapshot.notifications.map((notification) => changedById.get(notification.id) ?? notification),
+      notifications: snapshot.notifications.filter((notification) => !deleteIds.has(notification.id)),
     }));
 
-    for (const notification of changedNotifications) {
-      commitOperation(queueFor("notifications", "upsert", notification.id, notification));
+    for (const notification of notificationsToDelete) {
+      commitOperation(queueFor("notifications", "delete", notification.id));
     }
   }, [currentUserId, commitOperation]);
 
