@@ -78,7 +78,6 @@ export const initFCMPush = async (
 ): Promise<void> => {
   const mod = await loadPush();
   if (!mod) return;
-  if (initializedUserId === userId) return;
 
   for (const handle of listenerHandles) {
     handle.remove();
@@ -89,9 +88,7 @@ export const initFCMPush = async (
   try {
     const perm = await mod.PushNotifications.requestPermissions();
     if (perm.receive !== "granted") {
-      initializedUserId = null;
-      console.warn("FCM push permission denied");
-      return;
+      console.warn("FCM notification permission denied; registering for data delivery anyway");
     }
 
     await mod.PushNotifications.register();

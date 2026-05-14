@@ -14,6 +14,7 @@ import type { GroupMessage, User } from "@/types";
 
 const DEFAULT_REACTIONS = ["\u{1F44D}", "\u{2764}\u{FE0F}", "\u{1F602}", "\u{1F62E}", "\u{1F622}"];
 const MORE_REACTIONS = ["\u{1F389}", "\u{1F525}", "\u{1F44F}", "\u{1F64F}", "\u{1F60D}", "\u{1F914}", "\u{1F973}", "\u{1F44C}", "\u{1F601}", "\u{1F605}", "\u{1F621}", "\u{1F4AF}", "\u{1F680}", "\u{2B50}", "\u{1F31F}", "\u{1F917}"];
+const ALL_REACTIONS = new Set([...DEFAULT_REACTIONS, ...MORE_REACTIONS]);
 
 const Groups = () => {
   const { groupId, mode } = useParams();
@@ -182,7 +183,12 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
   const unreadNotificationIds = useMemo(
     () => currentUser
       ? notifications
-        .filter((item) => item.recipientId === currentUser.id && item.type === "group_message" && item.link === `/groups/${groupId}` && !item.read)
+        .filter((item) =>
+          item.recipientId === currentUser.id &&
+          (item.type === "group_message" || item.type === "group_reaction") &&
+          item.link === `/groups/${groupId}` &&
+          !item.read
+        )
         .map((item) => item.id)
         .join("|")
       : "",
@@ -440,7 +446,7 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
                       suppressSelectRef.current = true;
                       setActionMessageId(item.id);
                       window.setTimeout(() => { suppressSelectRef.current = false; }, 0);
-                    }, 450);
+                    }, 1000);
                   }}
                   onPointerUp={(event) => {
                     if (longPressTimerRef.current) {
@@ -908,11 +914,10 @@ const MessageActionsDialog = ({
   onDelete: (message: GroupMessage) => void;
   onInfo: (message: GroupMessage) => void;
 }) => {
-  const [customReaction, setCustomReaction] = useState("");
   const [customOpen, setCustomOpen] = useState(false);
   const react = (reaction: string) => {
-    if (!message || !reaction.trim()) return;
-    onReact(message, reaction.trim());
+    if (!message || !ALL_REACTIONS.has(reaction)) return;
+    onReact(message, reaction);
     onOpenChange(false);
   };
 
@@ -920,7 +925,6 @@ const MessageActionsDialog = ({
   <Dialog open={Boolean(message)} onOpenChange={(open) => {
     if (!open) {
       setCustomOpen(false);
-      setCustomReaction("");
     }
     onOpenChange(open);
   }}>
@@ -943,13 +947,6 @@ const MessageActionsDialog = ({
           </div>
           {customOpen && (
             <div className="space-y-2 rounded-lg border border-border bg-background p-3">
-              <Input
-                value={customReaction}
-                onChange={(event) => setCustomReaction(event.target.value)}
-                placeholder="Type or pick an emoji"
-                className="bg-card text-lg"
-                autoFocus
-              />
               <div className="grid grid-cols-8 gap-1">
                 {MORE_REACTIONS.map((reaction) => (
                   <button key={reaction} type="button" className="rounded-lg p-2 text-xl" onClick={() => react(reaction)}>
@@ -957,7 +954,6 @@ const MessageActionsDialog = ({
                   </button>
                 ))}
               </div>
-              <Button type="button" size="sm" className="w-full" onClick={() => react(customReaction)}>Use emoji</Button>
             </div>
           )}
           <div className="grid grid-cols-2 gap-2">

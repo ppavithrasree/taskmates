@@ -608,24 +608,22 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     }
   }, [currentUser, state.groupMessages, state.groups, commitOperation]);
 
-  // Request notification permission and initialize FCM push on first login
+  // Initialize FCM on first login. Delivery receipts use data pushes and must
+  // keep working even when visible notifications are disabled.
   useEffect(() => {
     if (!currentUser) return;
-    if (currentUser.notificationsEnabled === false) return;
     const timer = window.setTimeout(() => {
-      requestNotificationPermission().then((granted) => {
-        if (granted) {
-          console.log("Notification permission granted");
-          void initFCMPush(currentUser.id, (title, body, data) => {
+      void initFCMPush(currentUser.id, (title, body, data) => {
+        if (currentUser.notificationsEnabled !== false) {
+          void requestNotificationPermission().then((granted) => {
+            if (!granted) return;
             void showLocalNotification(title, body, undefined, data);
           });
-        } else {
-          console.warn("Notification permission denied");
         }
       });
     }, 1500); // 1.5s delay to ensure Android WebView is fully loaded
     return () => window.clearTimeout(timer);
-  }, [currentUser]);
+  }, [currentUser?.id, currentUser?.notificationsEnabled]);
 
   // Remove local posts that don't exist in Firebase anymore (privacy enforcement)
   useEffect(() => {
@@ -721,7 +719,8 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       title: string,
       body: string,
       link?: string,
-      pushData?: Record<string, string>
+      pushData?: Record<string, string>,
+      skipPush = false
     ) => {
       if (!currentUser || recipientId === currentUser.id) return false;
       const recipient = state.users.find((user) => user.id === recipientId);
@@ -745,6 +744,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       commitOperation(queueFor("notifications", "upsert", notif.id, notif));
       
       // Trigger free FCM push notification to the recipient
+      if (skipPush) return true;
       return sendFCMPush(recipientId, title, body, type, link, pushData);
     },
     [currentUser, state.users, commitOperation]
@@ -763,6 +763,33 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     const body = coverage.isComplete ? undefined : unloggedGapsBody(coverage.gaps);
     scheduleDailyMidnightNotification(!coverage.isComplete, body);
 
+    const createGapNotificationForDay = (dayStart: number) => {
+      const snap = stateRef.current;
+      const dayPosts = postsInLocalDay(snap.posts, currentUser.id, dayStart);
+      const dayCoverage = analyzeDayCoverage(dayPosts, dayStart);
+      if (dayCoverage.isComplete) return;
+      const notificationId = `unlogged_${currentUser.id}_${dateKey(dayStart)}`;
+      if (snap.notifications.some((item) => item.id === notificationId)) return;
+      const now = Date.now();
+      const notif: AppNotification = {
+        id: notificationId,
+        recipientId: currentUser.id,
+        type: "unlogged_gaps",
+        title: "Unlogged Activity Gaps",
+        body: unloggedGapsBody(dayCoverage.gaps),
+        link: "/dashboard",
+        read: false,
+        createdAt: now,
+        updatedAt: now,
+      };
+      setState((s) => s.notifications.some((item) => item.id === notificationId)
+        ? s
+        : { ...s, notifications: [...s.notifications, notif] });
+      commitOperation(queueFor("notifications", "upsert", notif.id, notif));
+    };
+
+    createGapNotificationForDay(todayStart - 86_400_000);
+
     // Also create one in-app/Firebase notification at midnight for yesterday's gaps.
     const scheduleMidnightCheck = () => {
       const next = new Date();
@@ -770,31 +797,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       next.setHours(0, 0, 0, 0);
       return window.setTimeout(() => {
         const dayStart = startOfLocalDay(Date.now()) - 86_400_000;
-        const dayPosts = postsInLocalDay(state.posts, currentUser.id, dayStart);
-        const dayCoverage = analyzeDayCoverage(dayPosts, dayStart);
-        if (!dayCoverage.isComplete) {
-          if (currentUser.notificationsEnabled === false) {
-            setMidnightTick((value) => value + 1);
-            return;
-          }
-          const notificationId = `unlogged_${currentUser.id}_${dateKey(dayStart)}`;
-          const now = Date.now();
-          const notif: AppNotification = {
-            id: notificationId,
-            recipientId: currentUser.id,
-            type: "unlogged_gaps",
-            title: "Unlogged Activity Gaps",
-            body: unloggedGapsBody(dayCoverage.gaps),
-            link: "/dashboard",
-            read: false,
-            createdAt: now,
-            updatedAt: now,
-          };
-          setState((s) => s.notifications.some((item) => item.id === notificationId)
-            ? s
-            : { ...s, notifications: [...s.notifications, notif] });
-          commitOperation(queueFor("notifications", "upsert", notif.id, notif));
-        }
+        createGapNotificationForDay(dayStart);
         setMidnightTick((value) => value + 1);
       }, Math.max(1000, next.getTime() - Date.now()));
     };
@@ -1199,16 +1202,17 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       group.memberIds.map(async (memberId) => {
         if (memberId === currentUser.id) return;
         const member = state.users.find((u) => u.id === memberId);
-        const isMuted = member?.mutedGroupIds?.includes(groupId) ?? false;
-        if (isMuted) return;
-        await createNotification(
-          memberId,
-          "group_message",
-          group.name,
-          `${currentUser.username}: ${clean}`,
-          `/groups/${groupId}`,
-          { messageId: message.id }
-        );
+        const title = group.name;
+        const body = `${currentUser.username}: ${clean}`;
+        const link = `/groups/${groupId}`;
+        const shouldNotify = member?.notificationsEnabled !== false && !(member?.mutedGroupIds?.includes(groupId) ?? false);
+        await sendFCMPush(memberId, title, body, "group_message", link, {
+          messageId: message.id,
+          silent: shouldNotify ? "false" : "true",
+        });
+        if (shouldNotify) {
+          await createNotification(memberId, "group_message", title, body, link, undefined, true);
+        }
       })
     );
     return { ok: true };
@@ -1310,14 +1314,18 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
 
   const toggleGroupMessageReaction: AppContextValue["toggleGroupMessageReaction"] = (messageId, reaction) => {
     if (!currentUser) return { ok: false, error: "Sign in first." };
+    const cleanReaction = reaction.trim();
+    if (!/\p{Extended_Pictographic}/u.test(cleanReaction) || /[\p{L}\p{N}]/u.test(cleanReaction)) {
+      return { ok: false, error: "Choose an emoji reaction." };
+    }
     const message = state.groupMessages.find((item) => item.id === messageId);
     if (!message) return { ok: false, error: "Message not found." };
     const group = state.groups.find((item) => item.id === message.groupId);
     if (!group?.memberIds.includes(currentUser.id)) return { ok: false, error: "Group not found." };
     const reactions = { ...(message.reactions ?? {}) };
-    const removing = reactions[currentUser.id] === reaction;
+    const removing = reactions[currentUser.id] === cleanReaction;
     if (removing) delete reactions[currentUser.id];
-    else reactions[currentUser.id] = reaction;
+    else reactions[currentUser.id] = cleanReaction;
     const updated = { ...message, reactions, updatedAt: Date.now(), dirty: true };
     setState((snapshot) => ({
       ...snapshot,
@@ -1329,7 +1337,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         message.senderId,
         "group_reaction",
         group.name,
-        `${currentUser.username} reacted ${reaction} to your message.`,
+        `${currentUser.username} reacted ${cleanReaction} to your message.`,
         `/groups/${message.groupId}`
       );
     }
@@ -1381,7 +1389,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     const notificationsToDelete = snap.notifications.filter(
       (notification) =>
         notification.recipientId === user.id &&
-        notification.type === "group_message" &&
+        (notification.type === "group_message" || notification.type === "group_reaction") &&
         notification.link === `/groups/${groupId}`
     );
 

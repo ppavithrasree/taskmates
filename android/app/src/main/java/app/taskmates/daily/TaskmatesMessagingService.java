@@ -73,6 +73,7 @@ public class TaskmatesMessagingService extends MessagingService {
     }
 
     private void showNotification(Map<String, String> data) {
+        if ("true".equals(data.get("silent"))) return;
         if (isAppInForeground()) return;
         String title = data.get("title");
         String body = data.get("body");

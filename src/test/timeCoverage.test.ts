@@ -48,6 +48,18 @@ describe("daily coverage", () => {
     ]);
   });
 
+  it("detects a one minute missing slot", () => {
+    const coverage = analyzeDayCoverage(
+      [
+        { startTime: minute(0), endTime: minute(1439) },
+      ],
+      day
+    );
+
+    expect(coverage.isComplete).toBe(false);
+    expect(coverage.gaps).toEqual([{ start: 1439, end: 1440 }]);
+  });
+
   it("names the only missing range when there is one continuous gap", () => {
     expect(unloggedGapsBody([{ start: 300, end: 420 }])).toBe("You have not kept logs for 05:00-07:00.");
   });
