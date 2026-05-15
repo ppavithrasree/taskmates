@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { Bell, BellOff, Clock3, Heart, MessageCircle, MessageSquare, SmilePlus, UserCheck, UserPlus } from "lucide-react";
 import { AppShell } from "@/components/layout/AppShell";
 import { useApp } from "@/context/AppContext";
+import { formatDayAwareDateTime } from "@/lib/dateTime";
 import type { AppNotification } from "@/types";
 
 const iconMap: Record<AppNotification["type"], typeof Bell> = {
@@ -25,19 +26,8 @@ const toneMap: Record<AppNotification["type"], string> = {
   post_comment: "bg-success-soft text-success",
 };
 
-const timeAgo = (timestamp: number) => {
-  const diff = Date.now() - timestamp;
-  const minutes = Math.floor(diff / 60_000);
-  if (minutes < 1) return "Just now";
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
-};
-
 const Notifications = () => {
-  const { notifications, markNotificationsRead } = useApp();
+  const { notifications, settings, markNotificationsRead } = useApp();
 
   useEffect(() => {
     markNotificationsRead();
@@ -69,7 +59,9 @@ const Notifications = () => {
                   <div className="min-w-0 flex-1">
                     <p className="text-sm font-bold">{notif.title}</p>
                     <p className="mt-0.5 text-sm text-muted-foreground">{notif.body}</p>
-                    <p className="mt-1 text-[10px] font-bold text-muted-foreground">{timeAgo(notif.createdAt)}</p>
+                    <p className="mt-1 text-[10px] font-bold text-muted-foreground">
+                      {formatDayAwareDateTime(notif.createdAt, settings.timeFormat)}
+                    </p>
                   </div>
                 </div>
               );
