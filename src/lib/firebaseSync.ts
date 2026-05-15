@@ -190,6 +190,9 @@ export const pushSyncOperation = async (operation: SyncOperation) => {
   }
 
   const cleanedPayload = cleanPayload(operation.payload);
+  if (operation.collection === "groupMessages" && cleanedPayload.encrypted === true) {
+    delete cleanedPayload.content;
+  }
   await setDoc(doc(services.db, operation.collection, operation.entityId), cleanedPayload, { merge: true });
 
   return true;

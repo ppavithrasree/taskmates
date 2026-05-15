@@ -102,22 +102,13 @@ export const initFCMPush = async (
       // Store token in Firestore
       try {
         const { getApps } = await import("firebase/app");
-        const { collection, doc, getDocs, getFirestore, query, setDoc, where, writeBatch } = await import("firebase/firestore");
+        const { doc, getFirestore, setDoc } = await import("firebase/firestore");
         const fbApp = getApps()[0];
         if (!fbApp) return;
         const db = getFirestore(fbApp);
         const installationId = localStorage.getItem("taskmates_installation_id") ?? crypto.randomUUID();
         localStorage.setItem("taskmates_installation_id", installationId);
         const tokenDocId = `${userId}_${installationId}`;
-        const existingTokens = await getDocs(query(collection(db, "fcmTokens"), where("userId", "==", userId)));
-        const batch = writeBatch(db);
-        existingTokens.docs.forEach((item) => {
-          const data = item.data();
-          if (item.id !== tokenDocId && (data.installationId === installationId || data.token === token)) {
-            batch.delete(item.ref);
-          }
-        });
-        await batch.commit();
         await setDoc(doc(db, "fcmTokens", tokenDocId), {
           userId,
           token,
