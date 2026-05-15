@@ -11,24 +11,11 @@ import {
   firebaseSignOut,
   subscribeFirebaseState,
   usernameToEmail,
-  checkFirebasePostsExist,
 } from "@/lib/firebaseSync";
 import { analyzeDayCoverage, dateKey, isValidPostRange, postsInLocalDay, startOfLocalDay, unloggedGapsBody } from "@/lib/timeCoverage";
 import { requestNotificationPermission, scheduleDailyMidnightNotification, showLocalNotification } from "@/lib/notifications";
 import { initFCMPush, sendFCMPush } from "@/lib/pushNotifications";
-import {
-  cacheGroupKey,
-  clearCachedGroupKey,
-  decryptGroupKeyForUser,
-  decryptMessageContent,
-  decryptWrappedKeyForUser,
-  encryptedKeysForMembers,
-  encryptMessageContent,
-  ensureEncryptionIdentity,
-  generateGroupKey,
-  getCachedGroupKey,
-  publicKeyString,
-} from "@/lib/e2eEncryption";
+
 import { connectPresence, emitTyping as emitSocketTyping, updatePresenceGroups, type PresenceStatus } from "@/lib/presence";
 
 const LS_KEY = "taskmates_activity_state_v1";
@@ -345,7 +332,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   const [currentUserId, setCurrentUserId] = useState<string | null>(() => localStorage.getItem(SESSION_KEY));
   const [online, setOnline] = useState(() => navigator.onLine);
   const [midnightTick, setMidnightTick] = useState(0);
-  const [decryptedMessages, setDecryptedMessages] = useState<Record<string, string>>({});
+
   const [presenceByUserId, setPresenceByUserId] = useState<Record<string, PresenceStatus>>({});
   const [typingByGroupId, setTypingByGroupId] = useState<Record<string, string[]>>({});
   const [activeGroupChatId, setActiveGroupChatId] = useState<string | null>(null);
@@ -416,25 +403,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     [online]
   );
 
-  useEffect(() => {
-    if (!currentUser) return;
-    let cancelled = false;
-    void (async () => {
-      const identity = await ensureEncryptionIdentity(currentUser.id);
-      if (cancelled) return;
-      const publicKey = publicKeyString(identity);
-      if (currentUser.publicKey === publicKey) return;
-      const updated = { ...currentUser, publicKey, updatedAt: Date.now() };
-      setState((snapshot) => ({
-        ...snapshot,
-        users: snapshot.users.map((user) => user.id === currentUser.id ? updated : user),
-      }));
-      commitOperation(queueFor("users", "upsert", updated.id, updated));
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [currentUser, commitOperation]);
+
 
   useEffect(() => {
     if (!currentUser?.theme || currentUser.theme === state.settings.theme) return;
@@ -460,7 +429,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     let lastSavedAt = 0;
     const saveLastSeen = () => {
       const now = Date.now();
-      if (now - lastSavedAt < 5000) return;
+      if (now - lastSavedAt < 60_000) return;
       lastSavedAt = now;
       const updated = { ...currentUser, lastSeen: now, updatedAt: now };
       const cache = loadLastSeenCache();
@@ -575,74 +544,65 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   }, [currentUserId]);
 
   // Mark messages as delivered (2 ticks) — runs when messages arrive from Firebase.
+  // Uses atomic arrayUnion writes to prevent concurrent delivery marking race conditions.
   // Uses a ref to track already-processed message IDs and prevent cascading re-renders.
   useEffect(() => {
     if (!currentUser) return;
     const now = Date.now();
-    const changedMessages: GroupMessage[] = [];
+    const toDeliver: string[] = [];
     for (const message of state.groupMessages) {
       if (message.senderId === currentUser.id) continue;
-      // Skip if we already processed this message in this session
       if (deliveryProcessedRef.current.has(message.id)) continue;
       const group = state.groups.find((item) => item.id === message.groupId);
       if (!group?.memberIds.includes(currentUser.id)) continue;
       const deliveredTo = message.deliveredTo ?? [message.senderId];
       if (deliveredTo.includes(currentUser.id)) {
-        // Already delivered, just mark as processed so we skip next time
         deliveryProcessedRef.current.add(message.id);
         continue;
       }
       deliveryProcessedRef.current.add(message.id);
-      changedMessages.push({ ...message, deliveredTo: [...deliveredTo, currentUser.id], updatedAt: now, dirty: true });
+      toDeliver.push(message.id);
     }
 
-    if (changedMessages.length === 0) return;
-    const changedById = new Map(changedMessages.map((message) => [message.id, message]));
+    if (toDeliver.length === 0) return;
+    // Update local state immediately so ticks show
     setState((snapshot) => ({
       ...snapshot,
-      groupMessages: snapshot.groupMessages.map((message) => changedById.get(message.id) ?? message),
+      groupMessages: snapshot.groupMessages.map((message) =>
+        toDeliver.includes(message.id)
+          ? { ...message, deliveredTo: [...(message.deliveredTo ?? [message.senderId]), currentUser.id], updatedAt: now }
+          : message
+      ),
     }));
 
-    for (const message of changedMessages) {
-      commitOperation(queueFor("groupMessages", "upsert", message.id, message));
+    // Use atomic arrayUnion writes — no race conditions with concurrent deliveries
+    for (const messageId of toDeliver) {
+      commitOperation(queueFor("groupMessages", "upsert", messageId, {
+        __op: "markDelivered",
+        userId: currentUser.id,
+        updatedAt: now,
+      }));
     }
   }, [currentUser, state.groupMessages, state.groups, commitOperation]);
 
-  // Initialize FCM on first login. Delivery receipts use data pushes and must
-  // keep working even when visible notifications are disabled.
+  // Request notification permission on first login
   useEffect(() => {
     if (!currentUser) return;
+    if (currentUser.notificationsEnabled === false) return;
     const timer = window.setTimeout(() => {
-      void initFCMPush(currentUser.id, (title, body, data) => {
-        if (currentUser.notificationsEnabled !== false) {
-          void requestNotificationPermission().then((granted) => {
-            if (!granted) return;
+      requestNotificationPermission().then((granted) => {
+        if (granted) {
+          console.log("Notification permission granted");
+          void initFCMPush(currentUser.id, (title, body, data) => {
             void showLocalNotification(title, body, undefined, data);
           });
+        } else {
+          console.warn("Notification permission denied");
         }
       });
-    }, 1500); // 1.5s delay to ensure Android WebView is fully loaded
+    }, 1500);
     return () => window.clearTimeout(timer);
-  }, [currentUser?.id, currentUser?.notificationsEnabled]);
-
-  // Remove local posts that don't exist in Firebase anymore (privacy enforcement)
-  useEffect(() => {
-    if (!online || !currentUser) return;
-    const otherPosts = state.posts.filter((p) => p.userId !== currentUser.id && !p.dirty);
-    if (otherPosts.length === 0) return;
-    const timer = window.setTimeout(async () => {
-      const ids = otherPosts.map((p) => p.id);
-      const missing = await checkFirebasePostsExist(ids);
-      if (missing.length > 0) {
-        const missingSet = new Set(missing);
-        setState((snapshot) => ({
-          ...snapshot,
-          posts: snapshot.posts.filter((p) => !missingSet.has(p.id)),
-        }));
-      }
-    }, 5000);
-    return () => window.clearTimeout(timer);
-  }, [online, currentUser, state.posts]);
+  }, [currentUser]);
 
   /** Get accepted connection user IDs from connections collection (single source of truth) */
   const getAcceptedConnectionIds = useCallback(
@@ -975,19 +935,13 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     );
     if (connectionsToDelete.length === 0) return;
 
-    setState((snapshot) => {
-      const deleteIds = new Set(connectionsToDelete.map((c) => c.id));
-      return {
-        ...snapshot,
-        connections: snapshot.connections.filter((conn) => !deleteIds.has(conn.id)),
-        syncQueue: [
-          ...snapshot.syncQueue,
-          ...connectionsToDelete.map((conn) => queueFor("connections", "delete", conn.id)),
-        ],
-      };
-    });
+    const deleteIds = new Set(connectionsToDelete.map((c) => c.id));
+    setState((snapshot) => ({
+      ...snapshot,
+      connections: snapshot.connections.filter((conn) => !deleteIds.has(conn.id)),
+    }));
 
-    // Push delete operations
+    // Push delete operations (only via commitOperation, not double-pushed via syncQueue)
     for (const conn of connectionsToDelete) {
       commitOperation(queueFor("connections", "delete", conn.id));
     }
@@ -1055,22 +1009,6 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       groups: snapshot.groups.map((item) => item.id === groupId ? updated : item),
     }));
     commitOperation(queueFor("groups", "upsert", updated.id, updated));
-    void (async () => {
-      const encryption = await ensureGroupEncryption(updated);
-      if (!encryption) return;
-      const refreshed = {
-        ...updated,
-        encryptedKeys: encryption.group.encryptedKeys,
-        encryptionVersion: encryption.group.encryptionVersion,
-        updatedAt: Date.now(),
-        dirty: true,
-      };
-      setState((snapshot) => ({
-        ...snapshot,
-        groups: snapshot.groups.map((item) => item.id === groupId ? refreshed : item),
-      }));
-      commitOperation(queueFor("groups", "upsert", refreshed.id, refreshed));
-    })();
     return { ok: true };
   };
 
@@ -1111,41 +1049,6 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     return removeGroupMember(groupId, currentUser.id);
   };
 
-  const ensureGroupEncryption = async (group: Group) => {
-    if (!currentUser) return null;
-    let groupKey = getCachedGroupKey(currentUser.id, group.id);
-    if (!groupKey) {
-      groupKey = await decryptGroupKeyForUser(currentUser.id, group.id, group.encryptedKeys?.[currentUser.id]).catch(() => null);
-    }
-    if (!groupKey) {
-      const hasWrappedKeys = Object.keys(group.encryptedKeys ?? {}).length > 0;
-      const hasExistingMessages = state.groupMessages.some((message) => message.groupId === group.id);
-      if (group.encryptionVersion === 1 || hasWrappedKeys || hasExistingMessages) return null;
-      groupKey = generateGroupKey();
-      cacheGroupKey(currentUser.id, group.id, groupKey);
-    }
-
-    const members = group.memberIds
-      .map((id) => state.users.find((user) => user.id === id))
-      .filter(Boolean) as User[];
-    const encryptedKeys = await encryptedKeysForMembers(members, groupKey, group.encryptedKeys);
-    const keysChanged = JSON.stringify(encryptedKeys) !== JSON.stringify(group.encryptedKeys ?? {});
-    if (!keysChanged && group.encryptionVersion === 1) return { groupKey, group };
-
-    const updatedGroup: Group = {
-      ...group,
-      encryptedKeys,
-      encryptionVersion: 1,
-      updatedAt: Date.now(),
-      dirty: true,
-    };
-    setState((snapshot) => ({
-      ...snapshot,
-      groups: snapshot.groups.map((item) => item.id === group.id ? updatedGroup : item),
-    }));
-    commitOperation(queueFor("groups", "upsert", updatedGroup.id, updatedGroup));
-    return { groupKey, group: updatedGroup };
-  };
 
   const addGroupMessage: AppContextValue["addGroupMessage"] = async (groupId, content, replyToMessageId) => {
     if (!currentUser) return { ok: false, error: "Sign in first." };
@@ -1153,16 +1056,6 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     if (!group || !group.memberIds.includes(currentUser.id)) return { ok: false, error: "Group not found." };
     const clean = content.trim();
     if (!clean) return { ok: false, error: "Type a message first." };
-    const identity = await ensureEncryptionIdentity(currentUser.id);
-    const currentPublicKey = publicKeyString(identity);
-    const members = group.memberIds
-      .map((id) => state.users.find((user) => user.id === id))
-      .filter(Boolean)
-      .map((user) => user.id === currentUser.id ? { ...user, publicKey: currentPublicKey } : user) as User[];
-    const messageKey = generateGroupKey();
-    const encryptedKeys = await encryptedKeysForMembers(members, messageKey);
-    if (!encryptedKeys[currentUser.id]) return { ok: false, error: "Encryption is not ready." };
-    const encrypted = await encryptMessageContent(messageKey, clean);
     const replyingTo = replyToMessageId
       ? state.groupMessages.find((item) => item.id === replyToMessageId && item.groupId === groupId)
       : undefined;
@@ -1173,11 +1066,6 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       groupId,
       senderId: currentUser.id,
       content: clean,
-      encrypted: true,
-      encryptionVersion: 2,
-      ciphertext: encrypted.ciphertext,
-      iv: encrypted.iv,
-      encryptedKeys,
       recipientIds: group.memberIds,
       replyToMessageId: replyingTo?.id,
       deliveredTo: [currentUser.id],
@@ -1192,27 +1080,23 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       groupMessages: [...snapshot.groupMessages, message],
       groups: snapshot.groups.map((item) => item.id === groupId ? updatedGroup : item),
     }));
-    setDecryptedMessages((snapshot) => ({ ...snapshot, [message.id]: clean }));
     commitOperation(queueFor("groupMessages", "upsert", message.id, message));
     commitOperation(queueFor("groups", "upsert", updatedGroup.id, updatedGroup));
 
-    // Notify all group members except sender (skip muted users). Android writes
-    // delivery receipts as soon as the push reaches the recipient device.
+    // Notify all group members except sender (skip muted users)
     await Promise.all(
       group.memberIds.map(async (memberId) => {
         if (memberId === currentUser.id) return;
         const member = state.users.find((u) => u.id === memberId);
-        const title = group.name;
-        const body = `${currentUser.username}: ${clean}`;
-        const link = `/groups/${groupId}`;
-        const shouldNotify = member?.notificationsEnabled !== false && !(member?.mutedGroupIds?.includes(groupId) ?? false);
-        await sendFCMPush(memberId, title, body, "group_message", link, {
-          messageId: message.id,
-          silent: shouldNotify ? "false" : "true",
-        });
-        if (shouldNotify) {
-          await createNotification(memberId, "group_message", title, body, link, undefined, true);
-        }
+        const isMuted = member?.mutedGroupIds?.includes(groupId) ?? false;
+        if (isMuted) return;
+        await createNotification(
+          memberId,
+          "group_message",
+          group.name,
+          `${currentUser.username}: ${clean}`,
+          `/groups/${groupId}`
+        );
       })
     );
     return { ok: true };
@@ -1226,26 +1110,11 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     if (!group?.memberIds.includes(currentUser.id)) return { ok: false, error: "Group not found." };
     const clean = content.trim();
     if (!clean) return { ok: false, error: "Type a message first." };
-    if (clean === (decryptedMessages[message.id] ?? message.content)) return { ok: false, error: "Use different text." };
-    const identity = await ensureEncryptionIdentity(currentUser.id);
-    const currentPublicKey = publicKeyString(identity);
-    const members = group.memberIds
-      .map((id) => state.users.find((user) => user.id === id))
-      .filter(Boolean)
-      .map((user) => user.id === currentUser.id ? { ...user, publicKey: currentPublicKey } : user) as User[];
-    const messageKey = generateGroupKey();
-    const encryptedKeys = await encryptedKeysForMembers(members, messageKey);
-    if (!encryptedKeys[currentUser.id]) return { ok: false, error: "Encryption is not ready." };
-    const encrypted = await encryptMessageContent(messageKey, clean);
+    if (clean === message.content) return { ok: false, error: "Use different text." };
 
     const updated = {
       ...message,
       content: clean,
-      encrypted: true,
-      encryptionVersion: 2,
-      ciphertext: encrypted.ciphertext,
-      iv: encrypted.iv,
-      encryptedKeys,
       recipientIds: group.memberIds,
       updatedAt: Date.now(),
       dirty: true,
@@ -1254,7 +1123,6 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       ...snapshot,
       groupMessages: snapshot.groupMessages.map((item) => item.id === messageId ? updated : item),
     }));
-    setDecryptedMessages((snapshot) => ({ ...snapshot, [message.id]: clean }));
     commitOperation(queueFor("groupMessages", "upsert", updated.id, updated));
     return { ok: true };
   };
@@ -1352,7 +1220,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     if (!group?.memberIds.includes(user.id)) return;
 
     const now = Date.now();
-    const changedMessages: GroupMessage[] = [];
+    const toMark: string[] = [];
     for (const message of snap.groupMessages) {
       if (message.groupId !== groupId || message.senderId === user.id) continue;
       const deliveredTo = message.deliveredTo ?? [message.senderId];
@@ -1360,25 +1228,36 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       const alreadyDelivered = deliveredTo.includes(user.id);
       const alreadyRead = readBy.includes(user.id);
       if (alreadyDelivered && alreadyRead) continue;
-      changedMessages.push({
-        ...message,
-        deliveredTo: alreadyDelivered ? deliveredTo : [...deliveredTo, user.id],
-        readBy: alreadyRead ? readBy : [...readBy, user.id],
-        updatedAt: now,
-        dirty: true,
-      });
+      toMark.push(message.id);
     }
 
-    if (changedMessages.length === 0) return;
-    const changedById = new Map(changedMessages.map((message) => [message.id, message]));
+    if (toMark.length === 0) return;
+    // Update local state immediately
     setState((snapshot) => ({
       ...snapshot,
-      groupMessages: snapshot.groupMessages.map((message) => changedById.get(message.id) ?? message),
+      groupMessages: snapshot.groupMessages.map((message) => {
+        if (!toMark.includes(message.id)) return message;
+        return {
+          ...message,
+          deliveredTo: (message.deliveredTo ?? [message.senderId]).includes(user.id)
+            ? message.deliveredTo
+            : [...(message.deliveredTo ?? [message.senderId]), user.id],
+          readBy: (message.readBy ?? [message.senderId]).includes(user.id)
+            ? message.readBy
+            : [...(message.readBy ?? [message.senderId]), user.id],
+          updatedAt: now,
+        };
+      }),
     }));
 
-    for (const message of changedMessages) {
-      deliveryProcessedRef.current.add(message.id);
-      commitOperation(queueFor("groupMessages", "upsert", message.id, message));
+    // Use atomic arrayUnion writes for each message
+    for (const messageId of toMark) {
+      deliveryProcessedRef.current.add(messageId);
+      commitOperation(queueFor("groupMessages", "upsert", messageId, {
+        __op: "markRead",
+        userId: user.id,
+        updatedAt: now,
+      }));
     }
   }, [currentUserId, commitOperation]);
 
@@ -1649,137 +1528,12 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       .sort((a, b) => b.updatedAt - a.updatedAt);
   }, [currentUser, state.groups]);
 
-  useEffect(() => {
-    if (!currentUser) return;
-    let cancelled = false;
-    void (async () => {
-      for (const group of visibleGroups) {
-        if (cancelled) return;
-        const hasLegacyMessages = state.groupMessages.some(
-          (message) => message.groupId === group.id && message.encrypted && !message.encryptedKeys
-        );
-        if (!hasLegacyMessages) continue;
-
-        let groupKey = getCachedGroupKey(currentUser.id, group.id);
-        if (!groupKey) {
-          groupKey = await decryptGroupKeyForUser(currentUser.id, group.id, group.encryptedKeys?.[currentUser.id]).catch(() => null);
-        }
-        if (!groupKey) continue;
-
-        const members = group.memberIds
-          .map((id) => state.users.find((user) => user.id === id))
-          .filter(Boolean) as User[];
-        const encryptedKeys = await encryptedKeysForMembers(members, groupKey, group.encryptedKeys);
-        if (cancelled) return;
-        if (JSON.stringify(encryptedKeys) === JSON.stringify(group.encryptedKeys ?? {})) continue;
-
-        const updatedGroup = { ...group, encryptedKeys, encryptionVersion: 1, updatedAt: Date.now(), dirty: true };
-        setState((snapshot) => ({
-          ...snapshot,
-          groups: snapshot.groups.map((item) => item.id === group.id ? updatedGroup : item),
-        }));
-        commitOperation(queueFor("groups", "upsert", updatedGroup.id, updatedGroup));
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [currentUser, visibleGroups, state.users, state.groupMessages, commitOperation]);
-
-  // Incremental decryption — only decrypt messages we haven't decrypted yet or whose ciphertext changed
-  const decryptionCacheRef = useRef<Record<string, { ciphertext?: string; iv?: string; content: string }>>({}); 
-  useEffect(() => {
-    if (!currentUser) return;
-    let cancelled = false;
-    // Find only messages that need decryption (new or changed)
-    const toDecrypt = state.groupMessages.filter((message) => {
-      const cached = decryptionCacheRef.current[message.id];
-      if (!cached) return true;
-      // Re-decrypt if ciphertext or iv changed (e.g., message was edited)
-      return cached.ciphertext !== message.ciphertext || cached.iv !== message.iv;
-    });
-    // Also track deletions
-    const activeIds = new Set(state.groupMessages.map((m) => m.id));
-    void (async () => {
-      const next: Record<string, string> = {};
-      for (const message of toDecrypt) {
-        if (cancelled) return;
-        const plainFallback = message.content || "Message";
-        if (!message.encrypted) {
-          next[message.id] = plainFallback;
-          decryptionCacheRef.current[message.id] = { ciphertext: message.ciphertext, iv: message.iv, content: plainFallback };
-          continue;
-        }
-        if (!message.iv || !message.ciphertext) {
-          next[message.id] = plainFallback;
-          decryptionCacheRef.current[message.id] = { ciphertext: message.ciphertext, iv: message.iv, content: plainFallback };
-          continue;
-        }
-        const group = state.groups.find((item) => item.id === message.groupId);
-        if (!group?.memberIds.includes(currentUser.id)) continue;
-        try {
-          const usesLegacyGroupKey = !message.encryptedKeys?.[currentUser.id];
-          const messageKey = usesLegacyGroupKey
-            ? await decryptGroupKeyForUser(currentUser.id, group.id, group.encryptedKeys?.[currentUser.id])
-            : await decryptWrappedKeyForUser(currentUser.id, message.encryptedKeys[currentUser.id]);
-          if (!messageKey) {
-            next[message.id] = plainFallback;
-            decryptionCacheRef.current[message.id] = { ciphertext: message.ciphertext, iv: message.iv, content: plainFallback };
-            continue;
-          }
-          try {
-            const decrypted = await decryptMessageContent(messageKey, message.iv, message.ciphertext);
-            next[message.id] = decrypted;
-            decryptionCacheRef.current[message.id] = { ciphertext: message.ciphertext, iv: message.iv, content: decrypted };
-          } catch (error) {
-            if (!usesLegacyGroupKey || !group.encryptedKeys?.[currentUser.id]) throw error;
-            clearCachedGroupKey(currentUser.id, group.id);
-            const refreshedKey = await decryptGroupKeyForUser(currentUser.id, group.id, group.encryptedKeys[currentUser.id]);
-            const decrypted = refreshedKey
-              ? await decryptMessageContent(refreshedKey, message.iv, message.ciphertext)
-              : plainFallback;
-            next[message.id] = decrypted;
-            decryptionCacheRef.current[message.id] = { ciphertext: message.ciphertext, iv: message.iv, content: decrypted };
-          }
-        } catch {
-          next[message.id] = plainFallback;
-          decryptionCacheRef.current[message.id] = { ciphertext: message.ciphertext, iv: message.iv, content: plainFallback };
-        }
-      }
-      if (cancelled) return;
-      // Clean up stale decryption cache entries
-      for (const id of Object.keys(decryptionCacheRef.current)) {
-        if (!activeIds.has(id)) delete decryptionCacheRef.current[id];
-      }
-      setDecryptedMessages((current) => {
-        let changed = false;
-        const merged = { ...current };
-        for (const [id, content] of Object.entries(next)) {
-          if (merged[id] !== content) {
-            merged[id] = content;
-            changed = true;
-          }
-        }
-        for (const id of Object.keys(merged)) {
-          if (!activeIds.has(id)) {
-            delete merged[id];
-            changed = true;
-          }
-        }
-        return changed ? merged : current;
-      });
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [currentUser, state.groupMessages, state.groups]);
-
   const presenceUserId = currentUser?.id;
   const presenceUsername = currentUser?.username;
 
   useEffect(() => {
     if (!presenceUserId || !presenceUsername) return;
-    return connectPresence({ id: presenceUserId, username: presenceUsername } as User, [], {
+    return connectPresence({ id: presenceUserId, username: presenceUsername } as User, visibleGroups, {
       onPresence: (items) => {
         setPresenceByUserId((current) => {
           const next = { ...current };
@@ -1808,13 +1562,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     updatePresenceGroups(visibleGroups);
   }, [visibleGroups]);
 
-  const groupMessagesForUi = useMemo(
-    () => state.groupMessages.map((message) => message.encrypted
-      ? { ...message, content: decryptedMessages[message.id] ?? message.content ?? "Message" }
-      : message
-    ),
-    [state.groupMessages, decryptedMessages]
-  );
+  const groupMessagesForUi = state.groupMessages;
 
   const myNotifications = useMemo(() => {
     if (!currentUser) return [];

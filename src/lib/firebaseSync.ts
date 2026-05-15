@@ -164,6 +164,31 @@ export const pushSyncOperation = async (operation: SyncOperation) => {
     return true;
   }
 
+  // Atomic delivery receipt — uses arrayUnion so concurrent writers don't overwrite each other
+  if (operation.collection === "groupMessages" && payload?.__op === "markDelivered") {
+    const ref = doc(services.db, "groupMessages", operation.entityId);
+    const userId = String(payload.userId ?? "");
+    if (!userId) return false;
+    await updateDoc(ref, {
+      deliveredTo: arrayUnion(userId),
+      updatedAt: payload.updatedAt,
+    });
+    return true;
+  }
+
+  // Atomic read receipt — marks both delivered and read atomically
+  if (operation.collection === "groupMessages" && payload?.__op === "markRead") {
+    const ref = doc(services.db, "groupMessages", operation.entityId);
+    const userId = String(payload.userId ?? "");
+    if (!userId) return false;
+    await updateDoc(ref, {
+      deliveredTo: arrayUnion(userId),
+      readBy: arrayUnion(userId),
+      updatedAt: payload.updatedAt,
+    });
+    return true;
+  }
+
   const cleanedPayload = cleanPayload(operation.payload);
   await setDoc(doc(services.db, operation.collection, operation.entityId), cleanedPayload, { merge: true });
 
@@ -228,21 +253,3 @@ export const subscribeFirebaseState = (
   };
 };
 
-/** Check if a set of post IDs exist in Firebase; returns the IDs that do NOT exist */
-export const checkFirebasePostsExist = async (postIds: string[]): Promise<string[]> => {
-  if (!postIds.length) return [];
-  const services = await getServices();
-  if (!services || !services.auth.currentUser) return [];
-  const { doc, getDoc } = await import("firebase/firestore");
-  const missing: string[] = [];
-  // Check in batches to avoid excessive reads
-  for (const id of postIds.slice(0, 50)) {
-    try {
-      const snapshot = await getDoc(doc(services.db, "posts", id));
-      if (!snapshot.exists()) missing.push(id);
-    } catch {
-      // If we can't check, don't remove
-    }
-  }
-  return missing;
-};
