@@ -28,6 +28,9 @@ const toneMap: Record<AppNotification["type"], string> = {
 
 const Notifications = () => {
   const { notifications, settings, markNotificationsRead } = useApp();
+  const visibleNotifications = notifications.filter(
+    (item) => item.type !== "group_message" && item.type !== "group_reaction"
+  );
 
   useEffect(() => {
     markNotificationsRead();
@@ -41,14 +44,14 @@ const Notifications = () => {
           <h1 className="text-2xl font-black">Notifications</h1>
         </div>
 
-        {notifications.length === 0 ? (
+        {visibleNotifications.length === 0 ? (
           <div className="flex flex-col items-center gap-3 rounded-lg border border-dashed border-border bg-card p-10 text-center">
             <BellOff className="size-8 text-muted-foreground" />
             <p className="text-sm text-muted-foreground">No notifications yet.</p>
           </div>
         ) : (
           <section className="space-y-2">
-            {notifications.map((notif) => {
+            {visibleNotifications.map((notif) => {
               const Icon = iconMap[notif.type] ?? Bell;
               const tone = toneMap[notif.type] ?? "bg-muted text-muted-foreground";
               const inner = (
