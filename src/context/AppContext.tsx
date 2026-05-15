@@ -740,7 +740,8 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       body: string,
       link?: string,
       pushData?: Record<string, string>,
-      skipPush = false
+      skipPush = false,
+      skipFirebase = false
     ) => {
       if (!currentUser || recipientId === currentUser.id) return false;
       const recipient = state.users.find((user) => user.id === recipientId);
@@ -757,11 +758,13 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         createdAt: now,
         updatedAt: now,
       };
-      setState((snapshot) => ({
-        ...snapshot,
-        notifications: [...snapshot.notifications, notif],
-      }));
-      commitOperation(queueFor("notifications", "upsert", notif.id, notif));
+      if (!skipFirebase) {
+        setState((snapshot) => ({
+          ...snapshot,
+          notifications: [...snapshot.notifications, notif],
+        }));
+        commitOperation(queueFor("notifications", "upsert", notif.id, notif));
+      }
 
       // Trigger free FCM push notification to the recipient
       if (skipPush) return true;
@@ -1149,6 +1152,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     commitOperation(queueFor("groups", "upsert", updatedGroup.id, updatedGroup));
 
     // Notify all group members except sender (skip muted users)
+    const pushBody = clean.length > 120 ? `${clean.slice(0, 117)}...` : clean;
     await Promise.all(
       group.memberIds.map(async (memberId) => {
         if (memberId === currentUser.id) return;
@@ -1159,9 +1163,11 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
           memberId,
           "group_message",
           group.name,
-          `${currentUser.username} sent a message`,
+          `${currentUser.username}: ${pushBody}`,
           `/groups/${groupId}`,
-          { messageId: message.id, groupId }
+          { messageId: message.id, groupId },
+          false,
+          true
         );
       })
     );
@@ -1277,7 +1283,10 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         "group_reaction",
         group.name,
         `${currentUser.username} reacted ${cleanReaction} to your message.`,
-        `/groups/${message.groupId}`
+        `/groups/${message.groupId}`,
+        undefined,
+        false,
+        true
       );
     }
     return { ok: true };
