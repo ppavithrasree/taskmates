@@ -15,11 +15,11 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 
 const Settings = () => {
   const { currentUser, users, settings, updateTheme, updateTimeFormat, updateUserSettings, runRetentionCleanup, getAcceptedConnectionIds } = useApp();
-  const [draftRetentionDays, setDraftRetentionDays] = useState(currentUser?.retentionDays ?? 15);
+  const [draftRetentionDays, setDraftRetentionDays] = useState(currentUser?.retentionDays ?? 5);
   const [confirmRetentionOpen, setConfirmRetentionOpen] = useState(false);
   const [retentionInfoOpen, setRetentionInfoOpen] = useState(false);
   const [usernameQuery, setUsernameQuery] = useState("");
-  const savedRetentionDays = currentUser?.retentionDays ?? 15;
+  const savedRetentionDays = currentUser?.retentionDays ?? 5;
 
   useEffect(() => {
     if (confirmRetentionOpen) return;

@@ -336,7 +336,6 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   const [state, setState] = useState<AppState>(() => load());
   const [currentUserId, setCurrentUserId] = useState<string | null>(() => localStorage.getItem(SESSION_KEY));
   const [online, setOnline] = useState(() => navigator.onLine);
-  const [midnightTick, setMidnightTick] = useState(0);
 
   const [presenceByUserId, setPresenceByUserId] = useState<Record<string, PresenceStatus>>({});
   const [typingByGroupId, setTypingByGroupId] = useState<Record<string, string[]>>({});
@@ -744,7 +743,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       skipFirebase = false
     ) => {
       if (!currentUser || recipientId === currentUser.id) return false;
-      const recipient = state.users.find((user) => user.id === recipientId);
+      const recipient = stateRef.current.users.find((user) => user.id === recipientId);
       if (recipient?.notificationsEnabled === false) return false;
       const now = Date.now();
       const notif: AppNotification = {
@@ -770,10 +769,35 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       if (skipPush) return true;
       return sendFCMPush(recipientId, title, body, type, link, pushData);
     },
-    [currentUser, state.users, commitOperation]
+    [currentUser, commitOperation]
   );
 
-  // Schedule the next midnight check for the previous day's coverage gaps.
+  const createGapNotificationForDay = useCallback((userId: string, dayStart: number) => {
+    const snap = stateRef.current;
+    const dayPosts = postsInLocalDay(snap.posts, userId, dayStart);
+    const dayCoverage = analyzeDayCoverage(dayPosts, dayStart);
+    if (dayCoverage.isComplete) return;
+    const notificationId = `unlogged_${userId}_${dateKey(dayStart)}`;
+    if (snap.notifications.some((item) => item.id === notificationId)) return;
+    const now = Date.now();
+    const notif: AppNotification = {
+      id: notificationId,
+      recipientId: userId,
+      type: "unlogged_gaps",
+      title: "Unlogged Activity Gaps",
+      body: unloggedGapsBody(dayCoverage.gaps),
+      link: "/dashboard",
+      read: false,
+      createdAt: now,
+      updatedAt: now,
+    };
+    setState((s) => s.notifications.some((item) => item.id === notificationId)
+      ? s
+      : { ...s, notifications: [...s.notifications, notif] });
+    commitOperation(queueFor("notifications", "upsert", notif.id, notif));
+  }, [commitOperation]);
+
+  // Keep only today's scheduled local midnight reminder in sync with today's coverage.
   useEffect(() => {
     if (!currentUser) return;
     if (currentUser.notificationsEnabled === false) {
@@ -785,48 +809,28 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     const coverage = analyzeDayCoverage(todayPosts, todayStart);
     const body = coverage.isComplete ? undefined : unloggedGapsBody(coverage.gaps);
     scheduleDailyMidnightNotification(!coverage.isComplete, body);
+  }, [currentUser, state.posts]);
 
-    const createGapNotificationForDay = (dayStart: number) => {
-      const snap = stateRef.current;
-      const dayPosts = postsInLocalDay(snap.posts, currentUser.id, dayStart);
-      const dayCoverage = analyzeDayCoverage(dayPosts, dayStart);
-      if (dayCoverage.isComplete) return;
-      const notificationId = `unlogged_${currentUser.id}_${dateKey(dayStart)}`;
-      if (snap.notifications.some((item) => item.id === notificationId)) return;
-      const now = Date.now();
-      const notif: AppNotification = {
-        id: notificationId,
-        recipientId: currentUser.id,
-        type: "unlogged_gaps",
-        title: "Unlogged Activity Gaps",
-        body: unloggedGapsBody(dayCoverage.gaps),
-        link: "/dashboard",
-        read: false,
-        createdAt: now,
-        updatedAt: now,
-      };
-      setState((s) => s.notifications.some((item) => item.id === notificationId)
-        ? s
-        : { ...s, notifications: [...s.notifications, notif] });
-      commitOperation(queueFor("notifications", "upsert", notif.id, notif));
-    };
-
-    createGapNotificationForDay(todayStart - 86_400_000);
-
-    // Also create one in-app/Firebase notification at midnight for yesterday's gaps.
+  // Create one in-app/Firebase notification strictly at midnight for the previous day.
+  useEffect(() => {
+    if (!currentUser) return;
+    if (currentUser.notificationsEnabled === false) return;
+    let timer: number | undefined;
     const scheduleMidnightCheck = () => {
       const next = new Date();
       next.setDate(next.getDate() + 1);
       next.setHours(0, 0, 0, 0);
-      return window.setTimeout(() => {
+      timer = window.setTimeout(() => {
         const dayStart = startOfLocalDay(Date.now()) - 86_400_000;
-        createGapNotificationForDay(dayStart);
-        setMidnightTick((value) => value + 1);
+        createGapNotificationForDay(currentUser.id, dayStart);
+        scheduleMidnightCheck();
       }, Math.max(1000, next.getTime() - Date.now()));
     };
-    const timer = scheduleMidnightCheck();
-    return () => window.clearTimeout(timer);
-  }, [currentUser, state.posts, commitOperation, midnightTick]);
+    scheduleMidnightCheck();
+    return () => {
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [currentUser, createGapNotificationForDay]);
 
   const register: AppContextValue["register"] = async (username, password, confirmPassword) => {
     const clean = username.trim().toLowerCase();
