@@ -84,6 +84,7 @@ export interface GroupMessage {
   deliveredTo?: string[];
   readBy?: string[];
   deletedFor?: string[];
+  editedAt?: number;
   createdAt: number;
   updatedAt: number;
   dirty?: boolean;

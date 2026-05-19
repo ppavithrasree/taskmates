@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { ArrowLeft, CalendarDays, Clock3, Plus } from "lucide-react";
+import { ArrowLeft, CalendarDays, Clock3, CloudOff, Plus, Search } from "lucide-react";
 import { AppShell } from "@/components/layout/AppShell";
 import { PostCard } from "@/features/posts/PostCard";
 import { PostForm } from "@/features/posts/PostForm";
@@ -9,14 +9,16 @@ import { activityStats, startOfLocalDay } from "@/lib/timeCoverage";
 import { formatDayAwareDateTime, formatTimeRange } from "@/lib/dateTime";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Progress } from "@/components/ui/progress";
+import { Input } from "@/components/ui/input";
 import type { Post, User } from "@/types";
 
 const Dashboard = () => {
-  const { currentUser, users, posts, settings, visibleFeedPosts, markNotificationsForLinkRead, presenceByUserId } = useApp();
+  const { currentUser, users, posts, settings, visibleFeedPosts, markNotificationsForLinkRead, presenceByUserId, online, syncPendingCount } = useApp();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const [open, setOpen] = useState(false);
+  const [postSearchOpen, setPostSearchOpen] = useState(false);
+  const [postSearch, setPostSearch] = useState("");
   const logHistoryRef = useRef(false);
   const selectedUserId = searchParams.get("feedUser");
   const myPosts = useMemo(
@@ -39,7 +41,16 @@ const Dashboard = () => {
       : [],
     [selectedUserId, visibleFeedPosts]
   );
-  const selectedUserDays = useMemo(() => groupPostsByDay(selectedUserPosts), [selectedUserPosts]);
+  const postSearchTerm = postSearch.trim().toLowerCase();
+  const filteredSelectedUserPosts = useMemo(() => {
+    if (!postSearchTerm) return selectedUserPosts;
+    return selectedUserPosts.filter((post) =>
+      post.content.toLowerCase().includes(postSearchTerm) ||
+      formatDayLabel(startOfLocalDay(post.startTime)).toLowerCase().includes(postSearchTerm) ||
+      formatTimeRange(post.startTime, post.endTime, settings.timeFormat).toLowerCase().includes(postSearchTerm)
+    );
+  }, [postSearchTerm, selectedUserPosts, settings.timeFormat]);
+  const selectedUserDays = useMemo(() => groupPostsByDay(filteredSelectedUserPosts), [filteredSelectedUserPosts]);
 
   useEffect(() => {
     markNotificationsForLinkRead("/dashboard");
@@ -75,6 +86,8 @@ const Dashboard = () => {
   };
 
   const closeUserFeed = () => {
+    setPostSearch("");
+    setPostSearchOpen(false);
     navigate("/dashboard");
   };
 
@@ -83,6 +96,14 @@ const Dashboard = () => {
   return (
     <AppShell title="Daily Activity">
       <div className="mx-auto max-w-5xl space-y-5 px-4 py-5">
+        {!online && (
+          <div className="flex items-center gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-700 shadow-soft dark:text-amber-200">
+            <CloudOff className="size-4 shrink-0" />
+            <p className="font-bold">
+              You are offline{syncPendingCount > 0 ? ` - ${syncPendingCount} pending change${syncPendingCount === 1 ? "" : "s"} will sync when you reconnect.` : "."}
+            </p>
+          </div>
+        )}
         {/* ── Hero Stats Card ── */}
         <section className="relative overflow-hidden rounded-2xl border border-border/60 bg-gradient-to-br from-primary/10 via-accent/8 to-success/8 p-5 shadow-soft-lg animate-fade-in-up">
           <div className="absolute -right-6 -top-6 size-24 rounded-full bg-gradient-primary opacity-10 blur-2xl" />
@@ -115,13 +136,31 @@ const Dashboard = () => {
                 <Button size="icon" variant="ghost" onClick={closeUserFeed} aria-label="Back to feed">
                   <ArrowLeft className="size-4" />
                 </Button>
-                <div className="min-w-0">
+                <div className="min-w-0 flex-1">
                   <h2 className="truncate text-xl font-black">{selectedUser.username}</h2>
                   <p className="text-sm text-muted-foreground">All activity grouped day by day</p>
                 </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  <span className="text-xs font-bold text-muted-foreground">{filteredSelectedUserPosts.length} posts</span>
+                  <Button size="icon" variant="ghost" onClick={() => setPostSearchOpen((value) => !value)} aria-label="Search posts">
+                    <Search className="size-4" />
+                  </Button>
+                </div>
               </div>
+              {postSearchOpen && (
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    value={postSearch}
+                    onChange={(event) => setPostSearch(event.target.value)}
+                    placeholder="Search this user's posts"
+                    className="h-11 bg-background pl-9"
+                    autoFocus
+                  />
+                </div>
+              )}
               {selectedUserDays.length === 0 ? (
-                <Empty text="No visible posts for this user yet." />
+                <Empty text={postSearchTerm ? "No matching posts." : "No visible posts for this user yet."} />
               ) : (
                 selectedUserDays.map((day) => (
                   <section key={day.dayStart} className="space-y-3 rounded-lg border border-border bg-card p-4 shadow-soft">

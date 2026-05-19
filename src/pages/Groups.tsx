@@ -1,6 +1,6 @@
 import { FormEvent, ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, Bell, BellOff, Check, Edit3, Info, Loader2, LogOut, MoreVertical, Pencil, Pin, PinOff, Plus, Reply, Send, Trash2, UserPlus, UsersRound, X } from "lucide-react";
+import { ArrowLeft, Bell, BellOff, Check, Edit3, Info, Loader2, LogOut, MoreVertical, Pencil, Pin, PinOff, Plus, Reply, Search, Send, Trash2, UserPlus, UsersRound, X } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/components/layout/AppShell";
 import { useApp } from "@/context/AppContext";
@@ -173,6 +173,8 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
   const [clearChatOpen, setClearChatOpen] = useState(false);
   const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null);
   const [dayLabelNow, setDayLabelNow] = useState(() => new Date());
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [messageSearch, setMessageSearch] = useState("");
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const messagesRef = useRef<HTMLElement | null>(null);
   const messageRefs = useRef<Record<string, HTMLDivElement | null>>({});
@@ -195,6 +197,14 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
     () => groupMessages.filter((item) => item.groupId === groupId).sort((a, b) => a.createdAt - b.createdAt),
     [groupMessages, groupId]
   );
+  const messageSearchTerm = messageSearch.trim().toLowerCase();
+  const messageSearchResults = useMemo(() => {
+    if (!messageSearchTerm) return [];
+    return messages.filter((item) => {
+      const sender = userById.get(item.senderId)?.username ?? "";
+      return messageText(item).toLowerCase().includes(messageSearchTerm) || sender.toLowerCase().includes(messageSearchTerm);
+    });
+  }, [messageSearchTerm, messages, userById]);
   const unreadMessageIds = useMemo(
     () => currentUser
       ? messages
@@ -421,6 +431,9 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
               {typingUsers.length ? `${typingUsers.join(", ")} typing...` : `${onlineCount} users online`}
             </p>
           </Link>
+          <Button size="icon" variant="ghost" aria-label="Search messages" onClick={() => setSearchOpen(true)}>
+            <Search className="size-4" />
+          </Button>
           <Button asChild size="icon" variant="ghost" aria-label="Group info">
             <Link to={`/groups/${group.id}/info`}><Info className="size-4" /></Link>
           </Button>
@@ -536,6 +549,7 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
                       <ReactionSummary reactions={item.reactions} />
                       <div className={`mt-1 flex items-center justify-end gap-1.5 text-[10px] ${mine ? "text-white/80 dark:text-emerald-950/75" : "text-muted-foreground"}`}>
                         {pinned && <Pin className="size-3" />}
+                        {item.editedAt && <span>edited</span>}
                         <span>{formatClockTime(item.createdAt, settings.timeFormat)}</span>
                         <button
                           type="button"
@@ -627,6 +641,51 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
         timeFormat={settings.timeFormat}
         onOpenChange={(open) => !open && setSelectedMessageId(null)}
       />
+      <Dialog open={searchOpen} onOpenChange={setSearchOpen}>
+        <DialogContent className="max-h-[90dvh] w-[calc(100vw-2rem)] max-w-lg overflow-y-auto rounded-lg">
+          <DialogHeader><DialogTitle>Search messages</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={messageSearch}
+                onChange={(event) => setMessageSearch(event.target.value)}
+                placeholder="Search messages"
+                className="h-11 bg-background pl-9"
+                autoFocus
+              />
+            </div>
+            {!messageSearchTerm ? (
+              <p className="rounded-lg border border-dashed border-border bg-card p-6 text-center text-sm text-muted-foreground">Type to search this chat.</p>
+            ) : messageSearchResults.length === 0 ? (
+              <p className="rounded-lg border border-dashed border-border bg-card p-6 text-center text-sm text-muted-foreground">No messages found.</p>
+            ) : (
+              <div className="space-y-2">
+                {messageSearchResults.map((item) => {
+                  const sender = userById.get(item.senderId);
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => {
+                        setSearchOpen(false);
+                        showMessage(item.id);
+                      }}
+                      className="w-full rounded-lg border border-border bg-card p-3 text-left shadow-soft"
+                    >
+                      <div className="mb-1 flex items-center justify-between gap-3">
+                        <span className="truncate text-xs font-black text-primary">{sender?.username ?? "Unknown"}</span>
+                        <span className="shrink-0 text-[10px] font-bold text-muted-foreground">{formatDayAwareDateTime(item.createdAt, settings.timeFormat)}</span>
+                      </div>
+                      <p className="line-clamp-2 whitespace-pre-wrap break-words text-sm">{messageText(item)}</p>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
       <MessageActionsDialog
         message={actionMessage}
         mine={actionMessage?.senderId === currentUser.id}

@@ -320,6 +320,7 @@ const mergeGroupMessages = (local: GroupMessage[], remote: GroupMessage[]) => {
       existing.iv === item.iv &&
       JSON.stringify(existing.encryptedKeys ?? {}) === JSON.stringify(item.encryptedKeys ?? {}) &&
       existing.replyToMessageId === item.replyToMessageId &&
+      existing.editedAt === item.editedAt &&
       existing.createdAt === item.createdAt;
 
     map.set(item.id, {
@@ -334,6 +335,7 @@ const mergeGroupMessages = (local: GroupMessage[], remote: GroupMessage[]) => {
       deliveredTo: mergeIds(existing.deliveredTo, item.deliveredTo),
       readBy: mergeIds(existing.readBy, item.readBy),
       deletedFor: mergeIds(existing.deletedFor, item.deletedFor),
+      editedAt: Math.max(existing.editedAt ?? 0, item.editedAt ?? 0) || undefined,
       updatedAt: Math.max(existing.updatedAt, item.updatedAt),
       dirty: sameMessageBody ? false : existing.dirty,
     });
@@ -685,44 +687,50 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   );
 
   const runRetentionCleanup = useCallback(() => {
-    setState((snapshot) => {
-      const now = Date.now();
-      const expiredPostIds = new Set<string>();
-      const expiredMessageIds = new Set<string>();
-      const expiredNotificationIds = new Set<string>();
-      for (const post of snapshot.posts) {
-        const owner = snapshot.users.find((user) => user.id === post.userId);
-        const retentionDays = owner?.retentionDays ?? 15;
-        if (!post.deletedAt && now - post.endTime > retentionDays * 86_400_000) expiredPostIds.add(post.id);
-      }
-      for (const message of snapshot.groupMessages) {
-        const sender = snapshot.users.find((user) => user.id === message.senderId);
-        const retentionDays = sender?.retentionDays ?? 15;
-        if (now - message.createdAt > retentionDays * 86_400_000) expiredMessageIds.add(message.id);
-      }
-      for (const notification of snapshot.notifications) {
-        const recipient = snapshot.users.find((user) => user.id === notification.recipientId);
-        const retentionDays = recipient?.retentionDays ?? 15;
-        if (now - notification.createdAt > retentionDays * 86_400_000) expiredNotificationIds.add(notification.id);
-      }
-      if (!expiredPostIds.size && !expiredMessageIds.size && !expiredNotificationIds.size) {
-        return { ...snapshot, settings: { ...snapshot.settings, lastRetentionRun: now } };
-      }
+    const snapshot = stateRef.current;
+    const now = Date.now();
+    const expiredPostIds = new Set<string>();
+    const expiredMessageIds = new Set<string>();
+    const expiredNotificationIds = new Set<string>();
+
+    for (const post of snapshot.posts) {
+      const owner = snapshot.users.find((user) => user.id === post.userId);
+      const retentionDays = owner?.retentionDays ?? 15;
+      if (!post.deletedAt && now - post.endTime > retentionDays * 86_400_000) expiredPostIds.add(post.id);
+    }
+    for (const message of snapshot.groupMessages) {
+      const sender = snapshot.users.find((user) => user.id === message.senderId);
+      const retentionDays = sender?.retentionDays ?? 15;
+      if (now - message.createdAt > retentionDays * 86_400_000) expiredMessageIds.add(message.id);
+    }
+    for (const notification of snapshot.notifications) {
+      const recipient = snapshot.users.find((user) => user.id === notification.recipientId);
+      const retentionDays = recipient?.retentionDays ?? 15;
+      if (now - notification.createdAt > retentionDays * 86_400_000) expiredNotificationIds.add(notification.id);
+    }
+
+    if (!expiredPostIds.size && !expiredMessageIds.size && !expiredNotificationIds.size) {
+      setState((current) => ({ ...current, settings: { ...current.settings, lastRetentionRun: now } }));
+      return;
+    }
+
+    const operations: ReturnType<typeof queueFor>[] = [];
+    operations.push(
+      ...[...expiredPostIds].map((id) => queueFor("posts", "delete", id)),
+      ...[...expiredMessageIds].map((id) => queueFor("groupMessages", "delete", id)),
+      ...[...expiredNotificationIds].map((id) => queueFor("notifications", "delete", id))
+    );
+    setState((current) => {
       return {
-        ...snapshot,
-        posts: snapshot.posts.filter((post) => !expiredPostIds.has(post.id)),
-        groupMessages: snapshot.groupMessages.filter((message) => !expiredMessageIds.has(message.id)),
-        notifications: snapshot.notifications.filter((notification) => !expiredNotificationIds.has(notification.id)),
-        syncQueue: [
-          ...snapshot.syncQueue,
-          ...[...expiredPostIds].map((id) => queueFor("posts", "delete", id)),
-          ...[...expiredMessageIds].map((id) => queueFor("groupMessages", "delete", id)),
-          ...[...expiredNotificationIds].map((id) => queueFor("notifications", "delete", id)),
-        ],
-        settings: { ...snapshot.settings, lastRetentionRun: now },
+        ...current,
+        posts: current.posts.filter((post) => !expiredPostIds.has(post.id)),
+        groupMessages: current.groupMessages.filter((message) => !expiredMessageIds.has(message.id)),
+        notifications: current.notifications.filter((notification) => !expiredNotificationIds.has(notification.id)),
+        settings: { ...current.settings, lastRetentionRun: now },
       };
     });
-  }, []);
+    operations.forEach(commitOperation);
+  }, [commitOperation]);
 
   // Scheduled retention cleanup
   useEffect(() => {
@@ -1212,6 +1220,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       ciphertext: encryptedPayload.ciphertext,
       iv: encryptedPayload.iv,
       recipientIds: group.memberIds,
+      editedAt: Date.now(),
       updatedAt: Date.now(),
       dirty: true,
     };
