@@ -1,6 +1,7 @@
 import { ReactNode } from "react";
 import { NavLink, Navigate, useNavigate } from "react-router-dom";
 import { Bell, ClipboardList, LayoutDashboard, LogOut, Search, Settings, User, UsersRound } from "lucide-react";
+import { TaskMateAIProvider } from "@/features/ai/TaskMateAIProvider";
 import { useApp } from "@/context/AppContext";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -74,6 +75,7 @@ export const AppShell = ({
 
       {/* ── Main Content ── */}
       <main className={cn("animate-fade-in-up pb-24", mainClassName)}>{children}</main>
+      <TaskMateAIProvider />
 
       {/* ── Bottom Navigation with Glassmorphism ── */}
       <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-border/40 bg-card/80 backdrop-blur-xl px-2 pb-[calc(env(safe-area-inset-bottom)+0.4rem)] pt-2">

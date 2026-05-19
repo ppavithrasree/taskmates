@@ -4,6 +4,8 @@ import { ArrowLeft, Bell, BellOff, Check, Edit3, Info, Loader2, LogOut, MoreVert
 import { toast } from "sonner";
 import { AppShell } from "@/components/layout/AppShell";
 import { useApp } from "@/context/AppContext";
+import { AI_NAME } from "@/features/ai/constants";
+import { useAiSettings } from "@/features/ai/useAiSettings";
 import { formatClockTime, formatDayAwareDateTime } from "@/lib/dateTime";
 import { Button } from "@/components/ui/button";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
@@ -182,6 +184,7 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
   const longPressTimerRef = useRef<number | null>(null);
   const suppressSelectRef = useRef(false);
   const typingRef = useRef<{ groupId?: string; active: boolean; timer?: number }>({ active: false });
+  const { enabled: aiEnabled } = useAiSettings(currentUser?.id);
 
   const group = groups.find((item) => item.id === groupId);
   const isMember = Boolean(currentUser && group?.memberIds.includes(currentUser.id));
@@ -417,6 +420,18 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
     });
   };
 
+  const aiMentionMatch = message.match(/(^|\s)@([a-z ]*)$/i);
+  const showAiMentionSuggestion = Boolean(
+    aiEnabled &&
+    aiMentionMatch &&
+    AI_NAME.toLowerCase().startsWith((aiMentionMatch[2] ?? "").toLowerCase()) &&
+    message.trim().length <= 120
+  );
+  const insertAiMention = () => {
+    setMessage((current) => current.replace(/(^|\s)@([a-z ]*)$/i, `$1@${AI_NAME} `));
+    window.requestAnimationFrame(() => composerRef.current?.focus());
+  };
+
   return (
     <AppShell title="Groups" mainClassName="h-[calc(100dvh-3.5rem)] overflow-hidden pb-0">
       <div className="mx-auto flex h-full max-w-3xl flex-col px-4 pb-[calc(env(safe-area-inset-bottom)+5.5rem)] pt-4">
@@ -607,6 +622,22 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
                 <X className="size-3.5" />
               </Button>
             </div>
+          )}
+          {showAiMentionSuggestion && (
+            <button
+              type="button"
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={insertAiMention}
+              className="flex w-full items-center gap-3 rounded-lg border border-primary/30 bg-primary-soft px-3 py-2 text-left text-sm shadow-soft"
+            >
+              <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-gradient-primary font-black text-primary-foreground">
+                AI
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block font-black">@{AI_NAME}</span>
+                <span className="block truncate text-xs text-muted-foreground">Tag the assistant in this group</span>
+              </span>
+            </button>
           )}
           <div className="flex items-end gap-2">
             <Textarea

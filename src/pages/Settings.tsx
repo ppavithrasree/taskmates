@@ -1,8 +1,11 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Bell, BellOff, Clock3, Info, Moon, Shield, Sun, Trash2 } from "lucide-react";
+import { Bell, BellOff, Bot, Clock3, Info, KeyRound, Moon, Pencil, Shield, Sun, Trash2 } from "lucide-react";
 import { AppShell } from "@/components/layout/AppShell";
 import { useApp } from "@/context/AppContext";
+import { AI_NAME } from "@/features/ai/constants";
+import { removeGeminiKey, saveAiEnabled, saveGeminiKey } from "@/features/ai/storage";
+import { useAiSettings } from "@/features/ai/useAiSettings";
 import type { Visibility } from "@/types";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
@@ -144,6 +147,8 @@ const Settings = () => {
           </div>
         </section>
 
+        <AiSettingsCard userId={currentUser.id} />
+
         <section className="space-y-4 rounded-lg border border-border bg-card p-4 shadow-soft">
           <div className="flex items-center justify-between gap-3">
             <h2 className="flex items-center gap-2 font-black"><Trash2 className="size-4 text-primary" /> Auto-Delete Period</h2>
@@ -233,6 +238,125 @@ const UsernameChecklist = ({
         )}
       </div>
     </div>
+  );
+};
+
+const AiSettingsCard = ({ userId }: { userId: string }) => {
+  const { enabled, hasKey } = useAiSettings(userId);
+  const [draftKey, setDraftKey] = useState("");
+  const [editing, setEditing] = useState(!hasKey);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (hasKey) {
+      setDraftKey("");
+      setEditing(false);
+    }
+  }, [hasKey]);
+
+  const saveKey = async () => {
+    setSaving(true);
+    try {
+      await saveGeminiKey(userId, draftKey);
+      setDraftKey("");
+      setEditing(false);
+      toast.success("Gemini API key saved.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not save API key.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <section className="space-y-4 rounded-lg border border-border bg-card p-4 shadow-soft">
+      <div className="flex items-center justify-between gap-3 rounded-lg bg-background p-3">
+        <div className="flex min-w-0 items-center gap-3">
+          <Bot className={enabled ? "size-4 text-primary" : "size-4 text-muted-foreground"} />
+          <div className="min-w-0">
+            <h2 className="font-black">{AI_NAME}</h2>
+            <p className="text-xs text-muted-foreground">{enabled ? "Assistant enabled" : "Assistant disabled"}</p>
+          </div>
+        </div>
+        <Switch
+          checked={enabled}
+          onCheckedChange={(checked) => {
+            saveAiEnabled(checked);
+            toast.success(checked ? `${AI_NAME} enabled.` : `${AI_NAME} disabled.`);
+          }}
+          aria-label={`Enable ${AI_NAME}`}
+        />
+      </div>
+
+      {enabled && (
+        <div className="space-y-3 rounded-lg border border-border bg-background p-3">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-2">
+              <KeyRound className="size-4 text-primary" />
+              <p className="font-bold">Gemini API key</p>
+            </div>
+            {hasKey && !editing && (
+              <Button type="button" size="sm" variant="outline" onClick={() => setEditing(true)}>
+                <Pencil className="mr-1 size-3.5" /> Edit
+              </Button>
+            )}
+          </div>
+
+          {hasKey && !editing ? (
+            <Input
+              value="saved-key-placeholder"
+              readOnly
+              type="password"
+              onCopy={(event) => event.preventDefault()}
+              onCut={(event) => event.preventDefault()}
+              className="h-11 select-none bg-card"
+              aria-label="Saved Gemini API key"
+            />
+          ) : (
+            <div className="space-y-3">
+              <Input
+                value={draftKey}
+                onChange={(event) => setDraftKey(event.target.value)}
+                type="password"
+                autoComplete="off"
+                placeholder="Paste Gemini API key"
+                className="h-11 bg-card"
+              />
+              <div className="flex justify-end gap-2">
+                {hasKey && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    onClick={() => {
+                      setDraftKey("");
+                      setEditing(false);
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                )}
+                {hasKey && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => {
+                      removeGeminiKey(userId);
+                      setEditing(true);
+                      toast.success("Gemini API key removed.");
+                    }}
+                  >
+                    Remove
+                  </Button>
+                )}
+                <Button type="button" onClick={saveKey} disabled={saving || !draftKey.trim()}>
+                  Save
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </section>
   );
 };
 

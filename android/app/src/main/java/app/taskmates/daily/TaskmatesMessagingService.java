@@ -30,11 +30,14 @@ public class TaskmatesMessagingService extends MessagingService {
     @Override
     public void onMessageReceived(@NonNull RemoteMessage remoteMessage) {
         Map<String, String> data = remoteMessage.getData();
-        markDelivered(data);
         if (isAppInForeground()) {
             super.onMessageReceived(remoteMessage);
             return;
         }
+        if (isAppInRecentTasks()) {
+            return;
+        }
+        markDelivered(data);
         showNotification(data);
     }
 
@@ -135,5 +138,13 @@ public class TaskmatesMessagingService extends MessagingService {
             }
         }
         return false;
+    }
+
+    private boolean isAppInRecentTasks() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) return false;
+        ActivityManager manager = (ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
+        if (manager == null) return false;
+        List<ActivityManager.AppTask> tasks = manager.getAppTasks();
+        return tasks != null && !tasks.isEmpty();
     }
 }

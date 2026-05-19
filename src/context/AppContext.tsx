@@ -25,7 +25,7 @@ const TOKEN_KEY = "taskmates_firebase_token_v1";
 const LAST_SEEN_KEY = "taskmates_last_seen_cache_v1";
 const DEFAULT_THEME: "light" | "dark" = "dark";
 
-interface AppContextValue {
+export interface AppContextValue {
   currentUser: User | null;
   users: User[];
   posts: Post[];
@@ -347,6 +347,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   const [state, setState] = useState<AppState>(() => load());
   const [currentUserId, setCurrentUserId] = useState<string | null>(() => localStorage.getItem(SESSION_KEY));
   const [online, setOnline] = useState(() => navigator.onLine);
+  const [appActive, setAppActive] = useState(() => document.visibilityState === "visible");
   const [groupsLoading, setGroupsLoading] = useState(false);
 
   const [presenceByUserId, setPresenceByUserId] = useState<Record<string, PresenceStatus>>({});
@@ -358,7 +359,9 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   const pushInitUserIdRef = useRef<string | null>(null);
   const lsSaveTimerRef = useRef<number | undefined>(undefined);
   const stateRef = useRef(state);
+  const appActiveRef = useRef(appActive);
   stateRef.current = state;
+  appActiveRef.current = appActive;
 
   // Debounced localStorage save — avoids blocking the main thread on every state update
   useEffect(() => {
@@ -444,7 +447,24 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   }, []);
 
   useEffect(() => {
-    if (!currentUser) return;
+    const onVisibilityChange = () => setAppActive(document.visibilityState === "visible");
+    document.addEventListener("visibilitychange", onVisibilityChange);
+
+    let removeAppState: (() => void) | undefined;
+    import("@capacitor/app").then(({ App }) => {
+      App.addListener("appStateChange", ({ isActive }) => setAppActive(isActive)).then((handle) => {
+        removeAppState = () => handle.remove();
+      });
+    }).catch(() => undefined);
+
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      removeAppState?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!currentUser || !appActive) return;
     let lastSavedAt = 0;
     const saveLastSeen = () => {
       const now = Date.now();
@@ -472,11 +492,11 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       window.removeEventListener("pagehide", saveLastSeen);
       window.removeEventListener("offline", onOffline);
     };
-  }, [currentUser, commitOperation]);
+  }, [currentUser, appActive, commitOperation]);
 
   // Flush sync queue when online
   useEffect(() => {
-    if (!online || state.syncQueue.length === 0) return;
+    if (!online || !appActive || state.syncQueue.length === 0) return;
     let cancelled = false;
     let retryTimer: number | undefined;
     const flush = async () => {
@@ -509,11 +529,11 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       cancelled = true;
       if (retryTimer) window.clearTimeout(retryTimer);
     };
-  }, [online, state.syncQueue]);
+  }, [online, appActive, state.syncQueue]);
 
   // Subscribe to Firebase realtime updates
   useEffect(() => {
-    if (!hasFirebaseConfig || !currentUserId) {
+    if (!hasFirebaseConfig || !currentUserId || !appActive) {
       setGroupsLoading(false);
       return;
     }
@@ -565,7 +585,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         };
       });
     });
-  }, [currentUserId]);
+  }, [currentUserId, appActive]);
 
   // Decrypt encrypted group messages once per version and cache plaintext in local state.
   useEffect(() => {
@@ -618,7 +638,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   // Uses atomic arrayUnion writes to prevent concurrent delivery marking race conditions.
   // Uses a ref to track already-processed message IDs and prevent cascading re-renders.
   useEffect(() => {
-    if (!currentUser) return;
+    if (!currentUser || !appActive) return;
     const now = Date.now();
     const toDeliver: string[] = [];
     for (const message of state.groupMessages) {
@@ -654,11 +674,11 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         updatedAt: now,
       }));
     }
-  }, [currentUser, state.groupMessages, state.groups, commitOperation]);
+  }, [currentUser, appActive, state.groupMessages, state.groups, commitOperation]);
 
   // Request notification permission on first login
   useEffect(() => {
-    if (!currentUser?.id) return;
+    if (!currentUser?.id || !appActive) return;
     if (currentUser.notificationsEnabled === false) {
       pushInitUserIdRef.current = null;
       return;
@@ -670,6 +690,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
           pushInitUserIdRef.current = currentUser.id;
           console.log("Notification permission granted");
           void initFCMPush(currentUser.id, (title, body, data) => {
+            if (!appActiveRef.current) return;
             void showLocalNotification(title, body, undefined, data);
           });
         } else {
@@ -678,7 +699,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       });
     }, 1500);
     return () => window.clearTimeout(timer);
-  }, [currentUser?.id, currentUser?.notificationsEnabled]);
+  }, [currentUser?.id, currentUser?.notificationsEnabled, appActive]);
 
   /** Get accepted connection user IDs from connections collection (single source of truth) */
   const getAcceptedConnectionIds = useCallback(
@@ -734,6 +755,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
 
   // Scheduled retention cleanup
   useEffect(() => {
+    if (!appActive) return;
     const schedule = () => {
       const next = new Date();
       next.setDate(next.getDate() + 1);
@@ -751,7 +773,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       window.clearTimeout(timeout);
       window.clearInterval(interval);
     };
-  }, [runRetentionCleanup]);
+  }, [runRetentionCleanup, appActive]);
 
   // Helper to create and push a notification to Firebase
   const createNotification = useCallback(
@@ -765,6 +787,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       skipPush = false,
       skipFirebase = false
     ) => {
+      if (!appActiveRef.current) return false;
       if (!currentUser || recipientId === currentUser.id) return false;
       const recipient = stateRef.current.users.find((user) => user.id === recipientId);
       if (recipient?.notificationsEnabled === false) return false;
@@ -823,7 +846,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   // Keep only today's scheduled local midnight reminder in sync with today's coverage.
   useEffect(() => {
     if (!currentUser) return;
-    if (currentUser.notificationsEnabled === false) {
+    if (!appActive || currentUser.notificationsEnabled === false) {
       scheduleDailyMidnightNotification(false);
       return;
     }
@@ -832,11 +855,11 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     const coverage = analyzeDayCoverage(todayPosts, todayStart);
     const body = coverage.isComplete ? undefined : unloggedGapsBody(coverage.gaps);
     scheduleDailyMidnightNotification(!coverage.isComplete, body);
-  }, [currentUser, state.posts]);
+  }, [currentUser, appActive, state.posts]);
 
   // Create one in-app/Firebase notification strictly at midnight for the previous day.
   useEffect(() => {
-    if (!currentUser) return;
+    if (!currentUser || !appActive) return;
     if (currentUser.notificationsEnabled === false) return;
     let timer: number | undefined;
     const scheduleMidnightCheck = () => {
@@ -853,7 +876,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     return () => {
       if (timer !== undefined) window.clearTimeout(timer);
     };
-  }, [currentUser, createGapNotificationForDay]);
+  }, [currentUser, appActive, createGapNotificationForDay]);
 
   const register: AppContextValue["register"] = async (username, password, confirmPassword) => {
     const clean = username.trim().toLowerCase();
@@ -1660,7 +1683,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   const presenceUsername = currentUser?.username;
 
   useEffect(() => {
-    if (!presenceUserId || !presenceUsername) return;
+    if (!presenceUserId || !presenceUsername || !appActive) return;
     return connectPresence({ id: presenceUserId, username: presenceUsername } as User, visibleGroups, {
       onPresence: (items) => {
         setPresenceByUserId((current) => {
@@ -1684,11 +1707,12 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         setTypingByGroupId((current) => ({ ...current, [groupId]: userIds.filter((id) => id !== presenceUserId) }));
       },
     });
-  }, [presenceUserId, presenceUsername]);
+  }, [presenceUserId, presenceUsername, visibleGroups, appActive]);
 
   useEffect(() => {
+    if (!appActive) return;
     updatePresenceGroups(visibleGroups);
-  }, [visibleGroups]);
+  }, [visibleGroups, appActive]);
 
   const groupMessagesForUi = useMemo(
     () => currentUser
