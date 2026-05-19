@@ -1,6 +1,6 @@
 import { FormEvent, ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, Bell, BellOff, Check, Edit3, Info, LogOut, MoreVertical, Pencil, Pin, PinOff, Plus, Reply, Send, Trash2, UserPlus, UsersRound, X } from "lucide-react";
+import { ArrowLeft, Bell, BellOff, Check, Edit3, Info, Loader2, LogOut, MoreVertical, Pencil, Pin, PinOff, Plus, Reply, Send, Trash2, UserPlus, UsersRound, X } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/components/layout/AppShell";
 import { useApp } from "@/context/AppContext";
@@ -15,6 +15,25 @@ import type { GroupMessage, User } from "@/types";
 const DEFAULT_REACTIONS = ["\u{1F44D}", "\u{2764}\u{FE0F}", "\u{1F602}", "\u{1F62E}", "\u{1F622}"];
 const MORE_REACTIONS = ["\u{1F389}", "\u{1F525}", "\u{1F44F}", "\u{1F64F}", "\u{1F60D}", "\u{1F914}", "\u{1F973}", "\u{1F44C}", "\u{1F601}", "\u{1F605}", "\u{1F621}", "\u{1F4AF}", "\u{1F680}", "\u{2B50}", "\u{1F31F}", "\u{1F917}"];
 const ALL_REACTIONS = new Set([...DEFAULT_REACTIONS, ...MORE_REACTIONS]);
+const MESSAGE_HOLD_MS = 500;
+const messageText = (message?: Pick<GroupMessage, "content" | "encrypted">) =>
+  message?.content || (message?.encrypted ? "Decrypting..." : "");
+const localDayKey = (timestamp: number) => {
+  const date = new Date(timestamp);
+  return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+};
+const sameLocalDay = (left: Date, right: Date) =>
+  left.getFullYear() === right.getFullYear() &&
+  left.getMonth() === right.getMonth() &&
+  left.getDate() === right.getDate();
+const chatDayLabel = (timestamp: number, now: Date) => {
+  const date = new Date(timestamp);
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  if (sameLocalDay(date, now)) return "Today";
+  if (sameLocalDay(date, yesterday)) return "Yesterday";
+  return date.toLocaleDateString(undefined, { day: "2-digit", month: "short", year: "numeric" });
+};
 
 const Groups = () => {
   const { groupId, mode } = useParams();
@@ -23,7 +42,7 @@ const Groups = () => {
 };
 
 const GroupsList = () => {
-  const { currentUser, users, settings, visibleGroups, groupMessages, getAcceptedConnectionIds, createGroup } = useApp();
+  const { currentUser, users, settings, visibleGroups, groupMessages, groupsLoading, getAcceptedConnectionIds, createGroup } = useApp();
   const [createOpen, setCreateOpen] = useState(false);
   const [name, setName] = useState("");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -56,7 +75,11 @@ const GroupsList = () => {
           </Button>
         </div>
 
-        {visibleGroups.length === 0 ? (
+        {groupsLoading ? (
+          <div className="flex min-h-[45dvh] items-center justify-center rounded-lg border border-border bg-card/70">
+            <Loader2 className="size-8 animate-spin text-primary" />
+          </div>
+        ) : visibleGroups.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-border/60 bg-card/50 p-8 text-center text-sm text-muted-foreground backdrop-blur-sm animate-fade-in-up">
             <div className="mx-auto mb-3 size-14 rounded-2xl bg-gradient-soft flex items-center justify-center">
               <UsersRound className="size-6 text-muted-foreground" />
@@ -89,7 +112,7 @@ const GroupsList = () => {
                     </div>
                     <div className="mt-1 flex items-center gap-3">
                       <p className={`min-w-0 flex-1 truncate text-sm ${unreadCount > 0 ? "font-bold text-foreground" : "text-muted-foreground"}`}>
-                        {lastMessage ? `${sender?.username ?? "Unknown"}: ${lastMessage.content}` : "Tap to start chatting"}
+                        {lastMessage ? `${sender?.username ?? "Unknown"}: ${messageText(lastMessage)}` : "Tap to start chatting"}
                       </p>
                       <UnreadBadge count={unreadCount} />
                     </div>
@@ -149,6 +172,7 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
   const [editingContent, setEditingContent] = useState("");
   const [clearChatOpen, setClearChatOpen] = useState(false);
   const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null);
+  const [dayLabelNow, setDayLabelNow] = useState(() => new Date());
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const messagesRef = useRef<HTMLElement | null>(null);
   const messageRefs = useRef<Record<string, HTMLDivElement | null>>({});
@@ -218,6 +242,11 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
     markGroupMessagesRead(group.id);
     markGroupNotificationsRead(group.id);
   }, [currentUser, group, isMember, markGroupMessagesRead, markGroupNotificationsRead, unreadMessageIds, unreadNotificationIds]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setDayLabelNow(new Date()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     if (!currentUserDraftId || !groupDraftId) return;
@@ -316,7 +345,7 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
 
   const startEditing = (item: GroupMessage) => {
     setEditingMessageId(item.id);
-    setEditingContent(item.content);
+    setEditingContent(messageText(item));
     setActionMessageId(null);
   };
 
@@ -333,13 +362,13 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
     setEditingContent("");
   };
 
-  const removeMessage = (item: GroupMessage) => {
-    const result = deleteGroupMessage(item.id);
+  const removeMessage = (item: GroupMessage, scope: "me" | "everyone") => {
+    const result = deleteGroupMessage(item.id, scope);
     if (!result.ok) {
       toast.error(result.error);
       return;
     }
-    toast.success("Message deleted.");
+    toast.success(scope === "everyone" ? "Message deleted for everyone." : "Message deleted for you.");
     setActionMessageId(null);
   };
 
@@ -414,7 +443,7 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
                   <Pin className="size-3.5 shrink-0 text-primary" />
                   <span className="min-w-0">
                     <span className="block truncate text-xs font-black">{sender?.username ?? "Unknown"}</span>
-                    <span className="block truncate text-xs text-muted-foreground">{item.content}</span>
+                    <span className="block truncate text-xs text-muted-foreground">{messageText(item)}</span>
                   </span>
                 </button>
               );
@@ -428,112 +457,122 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
               No messages yet.
             </div>
           ) : (
-            messages.map((item) => {
+            messages.map((item, index) => {
               const mine = item.senderId === currentUser.id;
               const sender = userById.get(item.senderId);
               const repliedTo = item.replyToMessageId ? messages.find((messageItem) => messageItem.id === item.replyToMessageId) : undefined;
               const repliedSender = repliedTo ? userById.get(repliedTo.senderId) : undefined;
               const pinned = (item.pinnedBy ?? []).includes(currentUser.id);
+              const previous = messages[index - 1];
+              const showDaySeparator = !previous || localDayKey(previous.createdAt) !== localDayKey(item.createdAt);
               return (
-                <div
-                  key={item.id}
-                  ref={(node) => { messageRefs.current[item.id] = node; }}
-                  className={`flex ${mine ? "justify-end" : "justify-start"}`}
-                  onPointerDown={(event) => {
-                    swipeRef.current = { id: item.id, x: event.clientX, y: event.clientY };
-                    if (longPressTimerRef.current) window.clearTimeout(longPressTimerRef.current);
-                    longPressTimerRef.current = window.setTimeout(() => {
-                      suppressSelectRef.current = true;
-                      setActionMessageId(item.id);
-                      window.setTimeout(() => { suppressSelectRef.current = false; }, 0);
-                    }, 1000);
-                  }}
-                  onPointerUp={(event) => {
-                    if (longPressTimerRef.current) {
-                      window.clearTimeout(longPressTimerRef.current);
-                      longPressTimerRef.current = null;
-                    }
-                    const start = swipeRef.current;
-                    swipeRef.current = null;
-                    if (!start || start.id !== item.id) return;
-                    const dx = event.clientX - start.x;
-                    const dy = Math.abs(event.clientY - start.y);
-                    if (dx > 55 && dy < 45) {
-                      suppressSelectRef.current = true;
-                      focusReply(item);
-                      window.setTimeout(() => { suppressSelectRef.current = false; }, 0);
-                    }
-                  }}
-                  onPointerCancel={() => {
-                    if (longPressTimerRef.current) window.clearTimeout(longPressTimerRef.current);
-                    longPressTimerRef.current = null;
-                    swipeRef.current = null;
-                  }}
-                >
+                <div key={item.id} className="space-y-3">
+                  {showDaySeparator && (
+                    <div className="flex justify-center">
+                      <span className="rounded-full border border-border bg-card px-3 py-1 text-[11px] font-black text-muted-foreground shadow-soft">
+                        {chatDayLabel(item.createdAt, dayLabelNow)}
+                      </span>
+                    </div>
+                  )}
                   <div
-                    className={`chat-bubble max-w-[82%] rounded-lg px-3 py-2 ${mine ? "bg-emerald-700 text-white dark:bg-emerald-500 dark:text-emerald-950" : "bg-card text-card-foreground"
-                      } ${highlightedMessageId === item.id ? "ring-2 ring-accent" : ""}`}
+                    ref={(node) => { messageRefs.current[item.id] = node; }}
+                    className={`flex w-full ${mine ? "justify-end" : "justify-start"}`}
                     style={{ touchAction: "pan-y" }}
-                    onClick={() => {
-                      if (suppressSelectRef.current) return;
-                      setSelectedMessageId(item.id);
+                    onPointerDown={(event) => {
+                      swipeRef.current = { id: item.id, x: event.clientX, y: event.clientY };
+                      if (longPressTimerRef.current) window.clearTimeout(longPressTimerRef.current);
+                      longPressTimerRef.current = window.setTimeout(() => {
+                        suppressSelectRef.current = true;
+                        setActionMessageId(item.id);
+                        window.setTimeout(() => { suppressSelectRef.current = false; }, 0);
+                      }, MESSAGE_HOLD_MS);
+                    }}
+                    onPointerUp={(event) => {
+                      if (longPressTimerRef.current) {
+                        window.clearTimeout(longPressTimerRef.current);
+                        longPressTimerRef.current = null;
+                      }
+                      const start = swipeRef.current;
+                      swipeRef.current = null;
+                      if (!start || start.id !== item.id) return;
+                      const dx = event.clientX - start.x;
+                      const dy = Math.abs(event.clientY - start.y);
+                      if (dx > 55 && dy < 45) {
+                        suppressSelectRef.current = true;
+                        focusReply(item);
+                        window.setTimeout(() => { suppressSelectRef.current = false; }, 0);
+                      }
+                    }}
+                    onPointerCancel={() => {
+                      if (longPressTimerRef.current) window.clearTimeout(longPressTimerRef.current);
+                      longPressTimerRef.current = null;
+                      swipeRef.current = null;
                     }}
                   >
-                    {!mine && <p className="mb-1 text-xs font-bold text-accent">{sender?.username ?? "Unknown"}</p>}
-                    {repliedTo && (
-                      <button
-                        type="button"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          showMessage(repliedTo.id);
-                        }}
-                        className={`mb-2 w-full rounded border-l-2 px-2 py-1 text-left text-xs ${mine ? "border-white/60 bg-white/10 dark:border-emerald-950/60 dark:bg-emerald-950/10" : "border-primary bg-primary-soft"
-                          }`}
-                      >
-                        <span className="block truncate font-black">{repliedSender?.username ?? "Unknown"}</span>
-                        <span className="block truncate opacity-80">{repliedTo.content}</span>
-                      </button>
-                    )}
-                    <LinkifiedText text={item.content} />
-                    <ReactionSummary reactions={item.reactions} />
-                    <div className={`mt-1 flex items-center justify-end gap-1.5 text-[10px] ${mine ? "text-white/80 dark:text-emerald-950/75" : "text-muted-foreground"}`}>
-                      {pinned && <Pin className="size-3" />}
-                      <span>{formatClockTime(item.createdAt, settings.timeFormat)}</span>
-                      <button
-                        type="button"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          focusReply(item);
-                        }}
-                        className="flex items-center rounded px-0.5"
-                        aria-label="Reply to message"
-                      >
-                        <Reply className="size-3.5" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          togglePin(item);
-                        }}
-                        className="flex items-center rounded px-0.5"
-                        aria-label={pinned ? "Unpin message" : "Pin message"}
-                      >
-                        {pinned ? <PinOff className="size-3.5" /> : <Pin className="size-3.5" />}
-                      </button>
-                      {mine && (
+                    <div
+                      className={`chat-bubble max-w-[82%] rounded-lg px-3 py-2 ${mine ? "bg-emerald-700 text-white dark:bg-emerald-500 dark:text-emerald-950" : "bg-card text-card-foreground"
+                        } ${highlightedMessageId === item.id ? "ring-2 ring-accent" : ""}`}
+                      onClick={() => {
+                        if (suppressSelectRef.current) return;
+                        setSelectedMessageId(item.id);
+                      }}
+                    >
+                      {!mine && <p className="mb-1 text-xs font-bold text-accent">{sender?.username ?? "Unknown"}</p>}
+                      {repliedTo && (
                         <button
                           type="button"
                           onClick={(event) => {
                             event.stopPropagation();
-                            setSelectedMessageId(item.id);
+                            showMessage(repliedTo.id);
                           }}
-                          className="flex items-center rounded px-0.5"
-                          aria-label="Message info"
+                          className={`mb-2 w-full rounded border-l-2 px-2 py-1 text-left text-xs ${mine ? "border-white/60 bg-white/10 dark:border-emerald-950/60 dark:bg-emerald-950/10" : "border-primary bg-primary-soft"
+                            }`}
                         >
-                          <MessageTicks message={item} groupMemberIds={group.memberIds} currentUserId={currentUser.id} />
+                          <span className="block truncate font-black">{repliedSender?.username ?? "Unknown"}</span>
+                          <span className="block truncate opacity-80">{messageText(repliedTo)}</span>
                         </button>
                       )}
+                      <LinkifiedText text={messageText(item)} pending={!item.content && item.encrypted} />
+                      <ReactionSummary reactions={item.reactions} />
+                      <div className={`mt-1 flex items-center justify-end gap-1.5 text-[10px] ${mine ? "text-white/80 dark:text-emerald-950/75" : "text-muted-foreground"}`}>
+                        {pinned && <Pin className="size-3" />}
+                        <span>{formatClockTime(item.createdAt, settings.timeFormat)}</span>
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            focusReply(item);
+                          }}
+                          className="flex items-center rounded px-0.5"
+                          aria-label="Reply to message"
+                        >
+                          <Reply className="size-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            togglePin(item);
+                          }}
+                          className="flex items-center rounded px-0.5"
+                          aria-label={pinned ? "Unpin message" : "Pin message"}
+                        >
+                          {pinned ? <PinOff className="size-3.5" /> : <Pin className="size-3.5" />}
+                        </button>
+                        {mine && (
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setSelectedMessageId(item.id);
+                            }}
+                            className="flex items-center rounded px-0.5"
+                            aria-label="Message info"
+                          >
+                            <MessageTicks message={item} groupMemberIds={group.memberIds} currentUserId={currentUser.id} />
+                          </button>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -548,7 +587,7 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
               <Reply className="mt-0.5 size-4 shrink-0 text-primary" />
               <div className="min-w-0 flex-1">
                 <p className="truncate text-xs font-black">{userById.get(replyToMessage.senderId)?.username ?? "Unknown"}</p>
-                <p className="truncate text-xs text-muted-foreground">{replyToMessage.content}</p>
+                <p className="truncate text-xs text-muted-foreground">{messageText(replyToMessage)}</p>
               </div>
               <Button type="button" size="icon" variant="ghost" className="size-7 shrink-0" onClick={() => setReplyToMessageId(null)}>
                 <X className="size-3.5" />
@@ -868,7 +907,7 @@ const MessageInfoDialog = ({
         {message && (
           <div className="space-y-4">
             <div className="rounded-lg bg-primary-soft p-3 text-sm">
-              <p className="whitespace-pre-wrap break-all font-medium leading-relaxed">{message.content}</p>
+              <p className="whitespace-pre-wrap break-all font-medium leading-relaxed">{messageText(message)}</p>
               <p className="mt-1 text-[10px] font-bold text-muted-foreground">{formatClockTime(message.createdAt, timeFormat)}</p>
             </div>
             <section className="space-y-2">
@@ -911,7 +950,7 @@ const MessageActionsDialog = ({
   onPin: (message: GroupMessage) => void;
   onReact: (message: GroupMessage, reaction: string) => void;
   onEdit: (message: GroupMessage) => void;
-  onDelete: (message: GroupMessage) => void;
+  onDelete: (message: GroupMessage, scope: "me" | "everyone") => void;
   onInfo: (message: GroupMessage) => void;
 }) => {
   const [customOpen, setCustomOpen] = useState(false);
@@ -933,7 +972,7 @@ const MessageActionsDialog = ({
       {message && (
         <div className="space-y-3">
           <div className="w-full min-w-0 rounded-lg bg-primary-soft p-3 text-sm">
-            <p className="min-w-0 whitespace-pre-wrap break-all font-medium leading-relaxed">{message.content}</p>
+            <p className="min-w-0 whitespace-pre-wrap break-all font-medium leading-relaxed">{messageText(message)}</p>
           </div>
           <div className="flex items-center gap-2 rounded-full border border-border bg-card p-2 shadow-soft">
             {DEFAULT_REACTIONS.map((reaction) => (
@@ -975,9 +1014,16 @@ const MessageActionsDialog = ({
               </>
             )}
           </div>
-          <Button type="button" variant="destructive" className="w-full" onClick={() => onDelete(message)}>
-            <Trash2 className="mr-2 size-4" /> Delete message
-          </Button>
+          <div className="space-y-2">
+            <Button type="button" variant="outline" className="w-full" onClick={() => onDelete(message, "me")}>
+              <Trash2 className="mr-2 size-4" /> Delete for me
+            </Button>
+            {mine && (
+              <Button type="button" variant="destructive" className="w-full" onClick={() => onDelete(message, "everyone")}>
+                <Trash2 className="mr-2 size-4" /> Delete for everyone
+              </Button>
+            )}
+          </div>
         </div>
       )}
     </DialogContent>
@@ -1031,10 +1077,11 @@ const ReactionSummary = ({ reactions }: { reactions?: Record<string, string> }) 
 
 const urlPattern = /(https?:\/\/[^\s<]+|www\.[^\s<]+)/gi;
 
-const LinkifiedText = ({ text }: { text: string }) => {
-  const parts = text.split(urlPattern);
+const LinkifiedText = ({ text, pending = false }: { text?: string; pending?: boolean }) => {
+  const safeText = text ?? "";
+  const parts = safeText.split(urlPattern);
   return (
-    <p className="chat-bubble-text whitespace-pre-wrap text-sm">
+    <p className={`chat-bubble-text whitespace-pre-wrap text-sm ${pending ? "italic opacity-70" : ""}`}>
       {parts.map((part, index) => {
         if (!part.match(urlPattern)) return <span key={`${part}-${index}`}>{part}</span>;
         const href = part.startsWith("http") ? part : `https://${part}`;

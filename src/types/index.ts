@@ -83,6 +83,7 @@ export interface GroupMessage {
   reactions?: Record<string, string>;
   deliveredTo?: string[];
   readBy?: string[];
+  deletedFor?: string[];
   createdAt: number;
   updatedAt: number;
   dirty?: boolean;

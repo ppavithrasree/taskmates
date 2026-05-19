@@ -10,6 +10,7 @@ import android.os.Build;
 
 import androidx.annotation.NonNull;
 import androidx.core.app.NotificationCompat;
+import androidx.core.content.ContextCompat;
 
 import com.capacitorjs.plugins.pushnotifications.MessagingService;
 import com.google.firebase.messaging.RemoteMessage;
@@ -30,8 +31,11 @@ public class TaskmatesMessagingService extends MessagingService {
     public void onMessageReceived(@NonNull RemoteMessage remoteMessage) {
         Map<String, String> data = remoteMessage.getData();
         markDelivered(data);
+        if (isAppInForeground()) {
+            super.onMessageReceived(remoteMessage);
+            return;
+        }
         showNotification(data);
-        super.onMessageReceived(remoteMessage);
     }
 
     private void markDelivered(Map<String, String> data) {
@@ -105,6 +109,7 @@ public class TaskmatesMessagingService extends MessagingService {
 
         NotificationCompat.Builder builder = new NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_taskmates)
+            .setColor(ContextCompat.getColor(this, R.color.colorPrimary))
             .setContentTitle(title)
             .setContentText(body)
             .setPriority(NotificationCompat.PRIORITY_MAX)

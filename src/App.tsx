@@ -1,8 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { useEffect, useRef } from "react";
+import { Component, ErrorInfo, ReactNode, useEffect, useRef } from "react";
 import { BrowserRouter, Route, Routes, useLocation, useNavigate, useNavigationType } from "react-router-dom";
 import { Capacitor } from "@capacitor/core";
-import { toast } from "sonner";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -21,6 +20,38 @@ import MyTasks from "./pages/MyTasks.tsx";
 import NotFound from "./pages/NotFound.tsx";
 
 const queryClient = new QueryClient();
+
+class AppErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean }> {
+  state = { hasError: false };
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error("App render failed:", error, info);
+  }
+
+  render() {
+    if (!this.state.hasError) return this.props.children;
+
+    return (
+      <main className="flex min-h-dvh items-center justify-center bg-background px-4 text-foreground">
+        <section className="w-full max-w-sm rounded-lg border border-border bg-card p-5 text-center shadow-soft">
+          <h1 className="text-lg font-black">Something went wrong</h1>
+          <p className="mt-2 text-sm text-muted-foreground">The app recovered from a display error.</p>
+          <button
+            type="button"
+            className="mt-4 h-10 rounded-lg bg-primary px-4 text-sm font-bold text-primary-foreground"
+            onClick={() => this.setState({ hasError: false })}
+          >
+            Continue
+          </button>
+        </section>
+      </main>
+    );
+  }
+}
 
 const backTargetFor = (path: string) => {
   const [pathname, search = ""] = path.split("?");
@@ -45,7 +76,6 @@ const BackRouteController = () => {
   const navigate = useNavigate();
   const navigationType = useNavigationType();
   const pathRef = useRef(location.pathname);
-  const lastExitPromptRef = useRef(0);
 
   const closeTopDialog = () => {
     if (!document.querySelector('[role="dialog"]')) return false;
@@ -101,13 +131,7 @@ const BackRouteController = () => {
         }
 
         if (pathname === "/dashboard" || pathname === "/") {
-          const now = Date.now();
-          if (now - lastExitPromptRef.current < 2000) {
-            App.exitApp();
-            return;
-          }
-          lastExitPromptRef.current = now;
-          toast("Do again to exit.");
+          App.exitApp();
           return;
         }
 
@@ -167,23 +191,25 @@ const App = () => (
       <BrowserRouter>
         <AppProvider>
           <BackRouteController />
-          <Routes>
-            <Route path="/" element={<Index />} />
-            <Route path="/login" element={<AuthPage mode="login" />} />
-            <Route path="/register" element={<AuthPage mode="register" />} />
-            <Route path="/dashboard" element={<Dashboard />} />
-            <Route path="/friends" element={<Friends />} />
-            <Route path="/groups" element={<Groups />} />
-            <Route path="/groups/:groupId" element={<Groups />} />
-            <Route path="/groups/:groupId/:mode" element={<Groups />} />
-            <Route path="/profile" element={<Profile />} />
-            <Route path="/profile/:username" element={<Profile />} />
-            <Route path="/settings" element={<Settings />} />
-            <Route path="/notifications" element={<Notifications />} />
-            <Route path="/tasks" element={<MyTasks />} />
-            {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
-            <Route path="*" element={<NotFound />} />
-          </Routes>
+          <AppErrorBoundary>
+            <Routes>
+              <Route path="/" element={<Index />} />
+              <Route path="/login" element={<AuthPage mode="login" />} />
+              <Route path="/register" element={<AuthPage mode="register" />} />
+              <Route path="/dashboard" element={<Dashboard />} />
+              <Route path="/friends" element={<Friends />} />
+              <Route path="/groups" element={<Groups />} />
+              <Route path="/groups/:groupId" element={<Groups />} />
+              <Route path="/groups/:groupId/:mode" element={<Groups />} />
+              <Route path="/profile" element={<Profile />} />
+              <Route path="/profile/:username" element={<Profile />} />
+              <Route path="/settings" element={<Settings />} />
+              <Route path="/notifications" element={<Notifications />} />
+              <Route path="/tasks" element={<MyTasks />} />
+              {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
+              <Route path="*" element={<NotFound />} />
+            </Routes>
+          </AppErrorBoundary>
         </AppProvider>
       </BrowserRouter>
     </TooltipProvider>

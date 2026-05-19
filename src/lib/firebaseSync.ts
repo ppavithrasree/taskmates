@@ -189,6 +189,17 @@ export const pushSyncOperation = async (operation: SyncOperation) => {
     return true;
   }
 
+  if (operation.collection === "groupMessages" && payload?.__op === "deleteForMe") {
+    const ref = doc(services.db, "groupMessages", operation.entityId);
+    const userId = String(payload.userId ?? "");
+    if (!userId) return false;
+    await updateDoc(ref, {
+      deletedFor: arrayUnion(userId),
+      updatedAt: payload.updatedAt,
+    });
+    return true;
+  }
+
   const cleanedPayload = cleanPayload(operation.payload);
   if (operation.collection === "groupMessages" && cleanedPayload.encrypted === true) {
     delete cleanedPayload.content;

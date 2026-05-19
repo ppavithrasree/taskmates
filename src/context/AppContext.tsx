@@ -36,6 +36,7 @@ interface AppContextValue {
   settings: AppState["settings"];
   syncPendingCount: number;
   online: boolean;
+  groupsLoading: boolean;
   register: (username: string, password: string, confirmPassword: string) => Promise<AuthResult>;
   login: (username: string, password: string) => Promise<AuthResult>;
   logout: () => Promise<void>;
@@ -53,7 +54,7 @@ interface AppContextValue {
   exitGroup: (groupId: string) => AuthResult;
   addGroupMessage: (groupId: string, content: string, replyToMessageId?: string) => Promise<AuthResult>;
   updateGroupMessage: (messageId: string, content: string) => Promise<AuthResult>;
-  deleteGroupMessage: (messageId: string) => AuthResult;
+  deleteGroupMessage: (messageId: string, scope?: "me" | "everyone") => AuthResult;
   clearGroupChat: (groupId: string) => AuthResult;
   toggleGroupMessagePin: (messageId: string) => AuthResult;
   toggleGroupMessageReaction: (messageId: string, reaction: string) => AuthResult;
@@ -260,11 +261,14 @@ const sameMap = (a?: Record<string, string>, b?: Record<string, string>) =>
   JSON.stringify(a ?? {}) === JSON.stringify(b ?? {});
 
 const mergePosts = (local: Post[], remote: Post[]) => {
-  const map = new Map(local.map((item) => [item.id, item]));
+  const localMap = new Map(local.map((item) => [item.id, item]));
+  const remoteIds = new Set(remote.map((item) => item.id));
+  const pendingLocal = local.filter((item) => item.dirty && !remoteIds.has(item.id));
+  const map = new Map(pendingLocal.map((item) => [item.id, item]));
   for (const item of remote) {
-    const existing = map.get(item.id);
+    const existing = localMap.get(item.id);
     if (!existing) {
-      map.set(item.id, { ...item, dirty: false });
+      map.set(item.id, { ...item, content: item.content ?? "", dirty: false });
       continue;
     }
     if (!existing.dirty && item.updatedAt >= existing.updatedAt) {
@@ -288,18 +292,22 @@ const mergePosts = (local: Post[], remote: Post[]) => {
 };
 
 const mergeGroupMessages = (local: GroupMessage[], remote: GroupMessage[]) => {
-  const map = new Map(local.map((item) => [item.id, item]));
+  const localMap = new Map(local.map((item) => [item.id, item]));
+  const remoteIds = new Set(remote.map((item) => item.id));
+  const pendingLocal = local.filter((item) => item.dirty && !remoteIds.has(item.id));
+  const map = new Map(pendingLocal.map((item) => [item.id, item]));
   for (const item of remote) {
-    const existing = map.get(item.id);
+    const existing = localMap.get(item.id);
     if (!existing) {
       map.set(item.id, { ...item, dirty: false });
       continue;
     }
     if (!existing.dirty && item.updatedAt >= existing.updatedAt) {
+      const sameEncryptedPayload = item.ciphertext === existing.ciphertext && item.iv === existing.iv;
       map.set(item.id, {
         ...item,
         // Keep locally decrypted text for encrypted messages so we don't re-decrypt on every snapshot.
-        content: item.content || existing.content,
+        content: item.content ?? (sameEncryptedPayload ? existing.content : ""),
         dirty: false,
       });
       continue;
@@ -325,6 +333,7 @@ const mergeGroupMessages = (local: GroupMessage[], remote: GroupMessage[]) => {
       recipientIds: mergeIds(existing.recipientIds, item.recipientIds),
       deliveredTo: mergeIds(existing.deliveredTo, item.deliveredTo),
       readBy: mergeIds(existing.readBy, item.readBy),
+      deletedFor: mergeIds(existing.deletedFor, item.deletedFor),
       updatedAt: Math.max(existing.updatedAt, item.updatedAt),
       dirty: sameMessageBody ? false : existing.dirty,
     });
@@ -336,6 +345,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   const [state, setState] = useState<AppState>(() => load());
   const [currentUserId, setCurrentUserId] = useState<string | null>(() => localStorage.getItem(SESSION_KEY));
   const [online, setOnline] = useState(() => navigator.onLine);
+  const [groupsLoading, setGroupsLoading] = useState(false);
 
   const [presenceByUserId, setPresenceByUserId] = useState<Record<string, PresenceStatus>>({});
   const [typingByGroupId, setTypingByGroupId] = useState<Record<string, string[]>>({});
@@ -501,8 +511,13 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
 
   // Subscribe to Firebase realtime updates
   useEffect(() => {
-    if (!hasFirebaseConfig || !currentUserId) return;
+    if (!hasFirebaseConfig || !currentUserId) {
+      setGroupsLoading(false);
+      return;
+    }
+    setGroupsLoading(true);
     return subscribeFirebaseState(currentUserId, (remote) => {
+      if (remote.groups) setGroupsLoading(false);
       setState((snapshot) => {
         let nextPosts = remote.posts ? mergePosts(snapshot.posts, remote.posts) : snapshot.posts;
         nextPosts = nextPosts.filter((p) => !p.deletedAt);
@@ -1208,18 +1223,34 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     return { ok: true };
   };
 
-  const deleteGroupMessage: AppContextValue["deleteGroupMessage"] = (messageId) => {
+  const deleteGroupMessage: AppContextValue["deleteGroupMessage"] = (messageId, scope = "everyone") => {
     if (!currentUser) return { ok: false, error: "Sign in first." };
     const message = state.groupMessages.find((item) => item.id === messageId);
     if (!message) return { ok: false, error: "Message not found." };
     const group = state.groups.find((item) => item.id === message.groupId);
     if (!group?.memberIds.includes(currentUser.id)) return { ok: false, error: "Group not found." };
+    const deleteForEveryone = scope === "everyone" && message.senderId === currentUser.id;
+    const now = Date.now();
 
     setState((snapshot) => ({
       ...snapshot,
-      groupMessages: snapshot.groupMessages.filter((item) => item.id !== messageId),
+      groupMessages: deleteForEveryone
+        ? snapshot.groupMessages.filter((item) => item.id !== messageId)
+        : snapshot.groupMessages.map((item) =>
+          item.id === messageId
+            ? { ...item, deletedFor: mergeIds(item.deletedFor, [currentUser.id]), updatedAt: now, dirty: true }
+            : item
+        ),
     }));
-    commitOperation(queueFor("groupMessages", "delete", messageId));
+    if (deleteForEveryone) {
+      commitOperation(queueFor("groupMessages", "delete", messageId));
+    } else {
+      commitOperation(queueFor("groupMessages", "upsert", messageId, {
+        __op: "deleteForMe",
+        userId: currentUser.id,
+        updatedAt: now,
+      }));
+    }
     return { ok: true };
   };
 
@@ -1650,7 +1681,12 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     updatePresenceGroups(visibleGroups);
   }, [visibleGroups]);
 
-  const groupMessagesForUi = state.groupMessages;
+  const groupMessagesForUi = useMemo(
+    () => currentUser
+      ? state.groupMessages.filter((message) => !(message.deletedFor ?? []).includes(currentUser.id))
+      : state.groupMessages,
+    [currentUser, state.groupMessages]
+  );
 
   const myNotifications = useMemo(() => {
     if (!currentUser) return [];
@@ -1676,6 +1712,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         .filter((message) => {
           if (message.senderId === currentUser.id) return false;
           if (message.groupId === activeGroupChatId) return false;
+          if ((message.deletedFor ?? []).includes(currentUser.id)) return false;
           const group = state.groups.find((item) => item.id === message.groupId);
           if (!group?.memberIds.includes(currentUser.id)) return false;
           return !(message.readBy ?? [message.senderId]).includes(currentUser.id);
@@ -1696,6 +1733,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     settings: state.settings,
     syncPendingCount: state.syncQueue.length,
     online,
+    groupsLoading,
     register,
     login,
     logout,
