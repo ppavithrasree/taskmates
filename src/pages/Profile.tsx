@@ -16,9 +16,27 @@ const Profile = () => {
   const [password, setPassword] = useState("");
   const target = currentUser ? (username ? users.find((user) => user.username === username.toLowerCase()) : currentUser) : undefined;
   const isOwn = Boolean(currentUser && target?.id === currentUser.id);
+  const connectedIds = useMemo(
+    () => currentUser ? new Set(getAcceptedConnectionIds(currentUser.id)) : new Set<string>(),
+    [currentUser, getAcceptedConnectionIds]
+  );
   const visiblePosts = useMemo(
-    () => target ? posts.filter((post) => post.userId === target.id && !post.deletedAt).sort((a, b) => b.startTime - a.startTime) : [],
-    [posts, target]
+    () => {
+      if (!target) return [];
+      return posts
+        .filter((post) => {
+          if (post.deletedAt) return false;
+          if (post.userId !== target.id) return false;
+          if (isOwn) return true;
+          // Respect privacy settings when viewing other users' profiles
+          const visibility = post.visibility ?? target.privacy ?? "public";
+          if (visibility === "public") return true;
+          if (visibility === "connections") return connectedIds.has(post.userId);
+          return (post.customUsernames ?? target.customUsernames ?? []).includes(currentUser!.username);
+        })
+        .sort((a, b) => b.startTime - a.startTime);
+    },
+    [posts, target, isOwn, connectedIds, currentUser]
   );
   const cutoff = target ? Date.now() - target.retentionDays * 86_400_000 : 0;
   const retained = visiblePosts.filter((post) => post.endTime >= cutoff);

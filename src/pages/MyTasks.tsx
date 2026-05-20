@@ -38,12 +38,16 @@ const draftFromTask = (task?: LocalTask, format: "12" | "24" = "24"): TaskDraft 
 const reminderFromDraft = (draft: TaskDraft, format: "12" | "24") => {
   if (!draft.reminderEnabled) return undefined;
   let hour = Number(draft.hour);
+  const minute = Number(draft.minute);
+  if (isNaN(hour) || isNaN(minute)) return undefined;
   if (format === "12") {
     hour %= 12;
     if (draft.period === "pm") hour += 12;
   }
   const [year, month, day] = draft.date.split("-").map(Number);
-  return new Date(year, month - 1, day, hour, Number(draft.minute), 0, 0).getTime();
+  if (isNaN(year) || isNaN(month) || isNaN(day)) return undefined;
+  const ts = new Date(year, month - 1, day, hour, minute, 0, 0).getTime();
+  return isNaN(ts) ? undefined : ts;
 };
 
 const MyTasks = () => {
@@ -120,6 +124,10 @@ const MyTasks = () => {
       return;
     }
     const reminderAt = reminderFromDraft(draft, timeFormat);
+    if (draft.reminderEnabled && !reminderAt) {
+      toast.error("Invalid reminder time.");
+      return;
+    }
     if (reminderAt && reminderAt <= Date.now()) {
       toast.error("Choose a future reminder time.");
       return;
@@ -250,7 +258,11 @@ const MyTasks = () => {
 const TimeInput = ({ label, value, onChange, max }: { label: string; value: string; onChange: (value: string) => void; max: number }) => (
   <label>
     <span className="mb-1 block text-[10px] font-black uppercase text-muted-foreground">{label}</span>
-    <Input inputMode="numeric" value={value} min={0} max={max} onChange={(event) => onChange(event.target.value.replace(/\D/g, "").slice(0, 2))} className="h-11 bg-background text-center font-black" />
+    <Input inputMode="numeric" value={value} min={0} max={max} onChange={(event) => {
+      const raw = event.target.value.replace(/\D/g, "").slice(0, 2);
+      const num = Number(raw);
+      onChange(raw && num > max ? String(max).padStart(2, "0") : raw);
+    }} className="h-11 bg-background text-center font-black" />
   </label>
 );
 

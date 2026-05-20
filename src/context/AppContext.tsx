@@ -349,6 +349,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   const [online, setOnline] = useState(() => navigator.onLine);
   const [appActive, setAppActive] = useState(() => document.visibilityState === "visible");
   const [groupsLoading, setGroupsLoading] = useState(false);
+  const groupsLoadedOnceRef = useRef(false);
 
   const [presenceByUserId, setPresenceByUserId] = useState<Record<string, PresenceStatus>>({});
   const [typingByGroupId, setTypingByGroupId] = useState<Record<string, string[]>>({});
@@ -538,9 +539,21 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       setGroupsLoading(false);
       return;
     }
-    setGroupsLoading(true);
-    return subscribeFirebaseState(currentUserId, (remote) => {
-      if (remote.groups) setGroupsLoading(false);
+    // Only show loading spinner on the initial groups fetch, not every time
+    // appActive toggles (e.g. tab switch or screen wake).
+    if (!groupsLoadedOnceRef.current) {
+      setGroupsLoading(true);
+    }
+    // Safety timeout: if groups snapshot never fires, stop loading after 10s.
+    const safetyTimer = window.setTimeout(() => {
+      setGroupsLoading(false);
+    }, 10_000);
+    const unsubscribe = subscribeFirebaseState(currentUserId, (remote) => {
+      if (remote.groups) {
+        groupsLoadedOnceRef.current = true;
+        setGroupsLoading(false);
+        window.clearTimeout(safetyTimer);
+      }
       setState((snapshot) => {
         let nextPosts = remote.posts ? mergePosts(snapshot.posts, remote.posts) : snapshot.posts;
         nextPosts = nextPosts.filter((p) => !p.deletedAt);
@@ -586,6 +599,10 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         };
       });
     });
+    return () => {
+      window.clearTimeout(safetyTimer);
+      unsubscribe();
+    };
   }, [currentUserId, appActive]);
 
   // Decrypt encrypted group messages once per version and cache plaintext in local state.
@@ -986,6 +1003,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     }
     localStorage.removeItem(TOKEN_KEY);
     await firebaseSignOut().catch(() => undefined);
+    groupsLoadedOnceRef.current = false;
     setCurrentUserId(null);
   };
 
