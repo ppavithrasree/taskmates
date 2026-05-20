@@ -27,6 +27,9 @@ let activePath = "/";
 let initializedUserId: string | null = null;
 let listenerHandles: { remove: () => void }[] = [];
 let navigationHandler: ((path: string) => void) | null = null;
+const INSTALLATION_ID_KEY = "taskmates_installation_id";
+const FCM_TOKEN_CACHE_KEY = "taskmates_fcm_token_cache_v1";
+const FCM_TOKEN_REFRESH_MS = 7 * 24 * 60 * 60 * 1000;
 
 export const setActivePushPath = (pathname: string) => {
   activePath = pathname;
@@ -97,7 +100,6 @@ export const initFCMPush = async (
     listenerHandles.push(await mod.PushNotifications.addListener("registration", async (data: unknown) => {
       const token = (data as { value?: string })?.value;
       if (!token) return;
-      console.log("FCM token:", token.slice(0, 20) + "...");
 
       // Store token in Firestore
       try {
@@ -106,17 +108,25 @@ export const initFCMPush = async (
         const fbApp = getApps()[0];
         if (!fbApp) return;
         const db = getFirestore(fbApp);
-        const installationId = localStorage.getItem("taskmates_installation_id") ?? crypto.randomUUID();
-        localStorage.setItem("taskmates_installation_id", installationId);
+        const installationId = localStorage.getItem(INSTALLATION_ID_KEY) ?? crypto.randomUUID();
+        localStorage.setItem(INSTALLATION_ID_KEY, installationId);
+        const cacheKey = `${userId}:${installationId}`;
+        const cached = JSON.parse(localStorage.getItem(FCM_TOKEN_CACHE_KEY) ?? "{}") as Record<string, { token?: string; syncedAt?: number }>;
+        const cachedEntry = cached[cacheKey];
+        const now = Date.now();
+        if (cachedEntry?.token === token && cachedEntry.syncedAt && now - cachedEntry.syncedAt < FCM_TOKEN_REFRESH_MS) {
+          return;
+        }
         const tokenDocId = `${userId}_${installationId}`;
         await setDoc(doc(db, "fcmTokens", tokenDocId), {
           userId,
           token,
           installationId,
-          updatedAt: Date.now(),
+          updatedAt: now,
           platform: "android",
         });
-        console.log("FCM token stored in Firestore");
+        cached[cacheKey] = { token, syncedAt: now };
+        localStorage.setItem(FCM_TOKEN_CACHE_KEY, JSON.stringify(cached));
       } catch (err) {
         console.error("Failed to store FCM token:", err);
       }

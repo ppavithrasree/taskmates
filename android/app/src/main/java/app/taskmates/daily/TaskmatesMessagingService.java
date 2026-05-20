@@ -3,7 +3,6 @@ package app.taskmates.daily;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
-import android.app.ActivityManager;
 import android.content.Context;
 import android.content.Intent;
 import android.os.Build;
@@ -21,7 +20,6 @@ import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
-import java.util.List;
 import java.util.Map;
 
 public class TaskmatesMessagingService extends MessagingService {
@@ -30,11 +28,8 @@ public class TaskmatesMessagingService extends MessagingService {
     @Override
     public void onMessageReceived(@NonNull RemoteMessage remoteMessage) {
         Map<String, String> data = remoteMessage.getData();
+        super.onMessageReceived(remoteMessage);
         if (isAppInForeground()) {
-            super.onMessageReceived(remoteMessage);
-            return;
-        }
-        if (isAppInRecentTasks()) {
             return;
         }
         markDelivered(data);
@@ -100,6 +95,10 @@ public class TaskmatesMessagingService extends MessagingService {
 
         Intent intent = new Intent(this, MainActivity.class);
         intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        intent.putExtra("google.message_id", data.getOrDefault("messageId", String.valueOf((title + body).hashCode())));
+        for (Map.Entry<String, String> entry : data.entrySet()) {
+            intent.putExtra(entry.getKey(), entry.getValue());
+        }
         String link = data.get("link");
         if (link != null) intent.putExtra("link", link);
 
@@ -124,27 +123,19 @@ public class TaskmatesMessagingService extends MessagingService {
     }
 
     private boolean isAppInForeground() {
-        ActivityManager manager = (ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
+        android.app.ActivityManager manager = (android.app.ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
         if (manager == null) return false;
-        List<ActivityManager.RunningAppProcessInfo> processes = manager.getRunningAppProcesses();
+        java.util.List<android.app.ActivityManager.RunningAppProcessInfo> processes = manager.getRunningAppProcesses();
         if (processes == null) return false;
         String packageName = getPackageName();
-        for (ActivityManager.RunningAppProcessInfo process : processes) {
+        for (android.app.ActivityManager.RunningAppProcessInfo process : processes) {
             if (
                 packageName.equals(process.processName) &&
-                process.importance == ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND
+                process.importance == android.app.ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND
             ) {
                 return true;
             }
         }
         return false;
-    }
-
-    private boolean isAppInRecentTasks() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) return false;
-        ActivityManager manager = (ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
-        if (manager == null) return false;
-        List<ActivityManager.AppTask> tasks = manager.getAppTasks();
-        return tasks != null && !tasks.isEmpty();
     }
 }

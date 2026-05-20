@@ -3,6 +3,9 @@ import type { Auth, User as FirebaseAuthUser } from "firebase/auth";
 import type { Firestore, Unsubscribe } from "firebase/firestore";
 import type { AppNotification, Connection, FirebaseConfig, Group, GroupMessage, Post, SyncOperation, User } from "@/types";
 
+const MAX_RETENTION_DAYS = 60;
+const FIRESTORE_RECENT_WINDOW_MS = (MAX_RETENTION_DAYS + 1) * 86_400_000;
+
 const env = import.meta.env;
 
 export const firebaseConfig: FirebaseConfig = {
@@ -226,7 +229,7 @@ export const subscribeFirebaseState = (
 
   getServices().then(async (services) => {
     if (!services || closed) return;
-    const { collection, onSnapshot, query, where } = await import("firebase/firestore");
+    const { collection, limit, onSnapshot, orderBy, query, where } = await import("firebase/firestore");
     if (closed) return;
     let sentConnections: Connection[] = [];
     let receivedConnections: Connection[] = [];
@@ -238,7 +241,12 @@ export const subscribeFirebaseState = (
       onSnapshot(collection(services.db, "users"), (snapshot) => {
         onData({ users: snapshot.docs.map((item) => normalizeEntity<User>(item.id, item.data())) });
       }, () => undefined),
-      onSnapshot(collection(services.db, "posts"), (snapshot) => {
+      onSnapshot(query(
+        collection(services.db, "posts"),
+        where("endTime", ">=", Date.now() - FIRESTORE_RECENT_WINDOW_MS),
+        orderBy("endTime", "desc"),
+        limit(1000)
+      ), (snapshot) => {
         onData({ posts: snapshot.docs.map((item) => normalizeEntity<Post>(item.id, item.data())) });
       }, () => undefined),
       onSnapshot(query(collection(services.db, "connections"), where("senderId", "==", currentUserId)), (snapshot) => {
