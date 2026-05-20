@@ -218,6 +218,12 @@ const cleanPostContent = (input: string) =>
     .replace(/\b(?:for|with)\s+(?:content|caption)\s*:?\s*/i, "")
     .trim();
 
+const splitNames = (input: string) =>
+  input
+    .split(/,|(?:\s+and\s+)|(?:\s+with\s+)|(?:\s+including\s+)/i)
+    .map((item) => item.replace(/^@/, "").trim())
+    .filter(Boolean);
+
 export const parseAiCommand = (input: string): AiCommand => {
   const text = stripAssistantMention(input);
   const lower = text.toLowerCase();
@@ -254,9 +260,17 @@ export const parseAiCommand = (input: string): AiCommand => {
 
   if (/\bmark\b.*\bnotifications?\b.*\bread\b/i.test(text)) return { type: "markNotificationsRead" };
 
-  const groupCreateMatch = text.match(/\bcreate\s+(?:a\s+)?group\s+(.+?)\s+(?:with|including)\s+([\s\S]+)/i);
+  const groupCreateMatch = text.match(/\b(?:create|make|start|build|open)\s+(?:a\s+)?group\s+(.+?)\s+(?:with|including|for)\s+([\s\S]+)/i);
   if (groupCreateMatch?.[1] && groupCreateMatch?.[2]) {
-    return { type: "createGroup", name: groupCreateMatch[1].trim(), usernames: groupCreateMatch[2].split(/,|and/i).map((item) => item.replace(/@/g, "").trim()).filter(Boolean) };
+    return { type: "createGroup", name: groupCreateMatch[1].trim(), usernames: splitNames(groupCreateMatch[2]) };
+  }
+
+  const groupCreateWithOnlyMatch = text.match(/\b(?:create|make|start|build|open)\s+(?:a\s+)?group\s+(?:with|including|for)\s+([\s\S]+)/i);
+  if (groupCreateWithOnlyMatch?.[1]) {
+    const usernames = splitNames(groupCreateWithOnlyMatch[1]);
+    const cleanNames = usernames.map((name) => name.replace(/[^\w.-]/g, "")).filter(Boolean);
+    const name = cleanNames.length === 1 ? cleanNames[0] : cleanNames.join(", ");
+    return { type: "createGroup", name: name || "New Group", usernames: cleanNames };
   }
 
   const timingEditRange = /\b(?:fix|edit|update|change|correct)\b.*\b(?:time|timing|start|end|range)\b/i.test(text)
@@ -297,7 +311,7 @@ export const parseAiCommand = (input: string): AiCommand => {
     return {
       type: "addGroupMembers",
       groupName: addMembersMatch[2].trim(),
-      usernames: addMembersMatch[1].split(/,|and/i).map((item) => item.replace(/@/g, "").trim()).filter(Boolean),
+      usernames: splitNames(addMembersMatch[1]),
     };
   }
 

@@ -35,12 +35,11 @@ const makeMessage = (role: AiChatMessage["role"], content: string, kind: AiChatM
 const chatKeyFor = (userId?: string | null) => `${AI_STORAGE_KEYS.chat}:${userId ?? "guest"}`;
 
 const capabilities = [
-  "Manage connection requests and accepted connections.",
-  "Create, rename, mute, leave, and update groups and members.",
-  "Send, schedule, edit, pin, react to, clear, and delete group messages where your account is allowed.",
-  "Create, edit, delete, like, and comment on visible posts.",
-  "Update theme, time format, privacy, notifications, auto-delete duration, reminders, and weekly recaps.",
-  "Read the recent app context provided to it and reply when tagged in groups.",
+  "Understands natural requests like create a group with Gautam or message Design at 6 pm.",
+  "Manages friends, requests, groups, members, group messages, reactions, pins, and cleanup.",
+  "Creates and updates posts, comments, likes, reminders, scheduled messages, and weekly recaps.",
+  "Changes theme, time format, privacy, notifications, and auto-delete settings.",
+  "Uses your signed-in account and recent app context so actions match what you can do in TaskMates.",
 ];
 
 export const AiChat = memo(({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) => {
@@ -88,7 +87,7 @@ export const AiChat = memo(({ open, onOpenChange }: { open: boolean; onOpenChang
 
   const starter = useMemo(
     () => messages.length === 0
-      ? makeMessage("assistant", `Hi, I'm ${AI_NAME}. Ask me for a weekly recap, a group update, or an app action.`)
+      ? makeMessage("assistant", `Hi, I'm ${AI_NAME}. Tell me what you want done in plain language: groups, messages, posts, reminders, settings, or a weekly recap.`)
       : null,
     [messages.length]
   );
@@ -139,7 +138,7 @@ export const AiChat = memo(({ open, onOpenChange }: { open: boolean; onOpenChang
       if (looksLikeAction && /\b(group|message|post|time|timing|connection|friend|request|member|comment|notification|privacy)\b/i.test(clean)) {
         setMessages((items) => [...items, makeMessage(
           "assistant",
-          "I could not map that to a safe app action. Try naming the group, post, message text, or timing clearly.",
+          "I understand this is an app action, but I need one missing detail to finish it. Add the group/user name, message text, post/comment hint, or time and I will do it.",
           "action"
         )]);
         return;
@@ -177,7 +176,7 @@ export const AiChat = memo(({ open, onOpenChange }: { open: boolean; onOpenChang
             </div>
             <div className="min-w-0 flex-1">
               <DialogTitle className="truncate text-base">{AI_NAME}</DialogTitle>
-              <p className="text-xs text-muted-foreground">Collaboration and productivity assistant</p>
+              <p className="text-xs text-muted-foreground">Plain-language control for TaskMates</p>
             </div>
             <Popover>
               <PopoverTrigger asChild>

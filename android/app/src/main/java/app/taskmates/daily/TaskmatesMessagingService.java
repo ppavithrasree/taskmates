@@ -28,8 +28,8 @@ public class TaskmatesMessagingService extends MessagingService {
     @Override
     public void onMessageReceived(@NonNull RemoteMessage remoteMessage) {
         Map<String, String> data = remoteMessage.getData();
-        super.onMessageReceived(remoteMessage);
         if (isAppInForeground()) {
+            super.onMessageReceived(remoteMessage);
             return;
         }
         markDelivered(data);

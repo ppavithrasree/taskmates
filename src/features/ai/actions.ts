@@ -43,6 +43,8 @@ const resolveUser = (app: AppContextValueForAi, username: string): User | undefi
 const resolveUsers = (app: AppContextValueForAi, usernames: string[]) =>
   usernames.map((username) => resolveUser(app, username)).filter(Boolean) as User[];
 
+const usersLabel = (usernames: string[]) => usernames.map((name) => `@${name.replace(/^@/, "")}`).join(", ");
+
 const latestPost = (posts: Post[], currentUserId?: string, mineOnly = false) =>
   posts
     .filter((item) => !item.deletedAt && (!mineOnly || item.userId === currentUserId))
@@ -81,6 +83,11 @@ export const buildAiContext = (app: AppContextValueForAi) => {
   const connectionNames = app.currentUser
     ? app.getAcceptedConnectionIds(app.currentUser.id).map((id) => app.users.find((user) => user.id === id)?.username).filter(Boolean).slice(0, 12).join(", ") || "none"
     : "none";
+  const knownUsers = app.users
+    .filter((user) => user.id !== app.currentUser?.id)
+    .map((user) => user.username)
+    .slice(0, 30)
+    .join(", ") || "none";
   const recentPosts = app.posts
     .filter((post) => post.userId === app.currentUser?.id && !post.deletedAt)
     .sort((a, b) => b.startTime - a.startTime)
@@ -97,7 +104,7 @@ export const buildAiContext = (app: AppContextValueForAi) => {
       return `- ${group?.name ?? "group"} (${mine}): ${message.content.slice(0, 140)}`;
     })
     .join("\n") || "No recent visible group messages.";
-  return `User:${app.currentUser?.username ?? "unknown"} Theme:${app.settings.theme} Time:${app.settings.timeFormat ?? "24"} Privacy:${app.currentUser?.privacy ?? "unknown"}\nConnections:${connectionNames}\nIncoming requests:${incomingRequests}\nVisible groups:${groupNames}\nRecent posts:\n${recentPosts}\nRecent visible group chat:\n${recentGroupMessages}`;
+  return `User:${app.currentUser?.username ?? "unknown"} Theme:${app.settings.theme} Time:${app.settings.timeFormat ?? "24"} Privacy:${app.currentUser?.privacy ?? "unknown"}\nConnections:${connectionNames}\nKnown users:${knownUsers}\nIncoming requests:${incomingRequests}\nVisible groups:${groupNames}\nRecent posts:\n${recentPosts}\nRecent visible group chat:\n${recentGroupMessages}`;
 };
 
 export const executeAiCommand = async (command: AiCommand, app: AppContextValueForAi): Promise<AiActionResult> => {
@@ -107,7 +114,7 @@ export const executeAiCommand = async (command: AiCommand, app: AppContextValueF
     return {
       handled: true,
       kind: "text",
-      content: "I can use the same app actions you can: connections, requests, groups, messages, posts, comments, likes, settings, notifications, reminders, scheduled sends, and weekly recaps. App permission rules still apply.",
+      content: "I can run TaskMates actions from plain language: create groups, add members, send or schedule messages, manage requests, update posts/comments, change settings, create reminders, and summarize your week. I use your signed-in account, so anything allowed in the app can be done from here.",
     };
   }
 
@@ -230,8 +237,23 @@ export const executeAiCommand = async (command: AiCommand, app: AppContextValueF
 
   if (command.type === "createGroup") {
     const members = resolveUsers(app, command.usernames);
+    if (command.usernames.length > 0 && members.length === 0) {
+      return {
+        handled: true,
+        content: `I could not find ${usersLabel(command.usernames)}. Ask them to create an account first, then I can make the group.`,
+        kind: "action",
+      };
+    }
+    const missing = command.usernames.filter((username) => !resolveUser(app, username));
     const result = app.createGroup({ name: command.name, memberIds: members.map((user) => user.id) });
-    return { handled: true, content: result.ok ? `Group "${command.name}" created.` : result.error ?? "Could not create the group.", kind: "action" };
+    if (!result.ok) return { handled: true, content: result.error ?? "Could not create the group.", kind: "action" };
+    return {
+      handled: true,
+      content: missing.length
+        ? `Group "${command.name}" created. I could not find ${usersLabel(missing)}, so they were not added yet.`
+        : `Group "${command.name}" created${members.length ? ` with ${members.map((user) => user.username).join(", ")}` : ""}.`,
+      kind: "action",
+    };
   }
 
   if (command.type === "renameGroup") {
@@ -245,6 +267,9 @@ export const executeAiCommand = async (command: AiCommand, app: AppContextValueF
     const group = resolveGroup(app, command.groupName);
     if (!group) return { handled: true, content: `I could not find a group named "${command.groupName}".`, kind: "action" };
     const members = resolveUsers(app, command.usernames);
+    if (command.usernames.length > 0 && members.length === 0) {
+      return { handled: true, content: `I could not find ${usersLabel(command.usernames)}.`, kind: "action" };
+    }
     const result = app.addGroupMembers(group.id, members.map((user) => user.id));
     return { handled: true, content: result.ok ? `Added members to ${group.name}.` : result.error ?? "Could not add members.", kind: "action" };
   }

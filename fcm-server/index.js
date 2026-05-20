@@ -108,6 +108,7 @@ app.post("/api/send-notification", authenticate, async (req, res) => {
             },
             android: {
               priority: "high",
+              ...(data?.messageId ? { collapseKey: String(data.messageId) } : {}),
             },
           })
           .catch((err) => {
