@@ -4,6 +4,8 @@ import { Capacitor } from "@capacitor/core";
 const CHANNEL_ID = "taskmates_alerts_v2";
 const NOTIFICATION_BASE_ID = 2400;
 let channelReady = false;
+const webTaskReminderTimers = new Map<number, number>();
+let webMidnightTimer: number | undefined;
 
 /** Create the high-importance notification channel (Android 8+) */
 const ensureChannel = async () => {
@@ -146,15 +148,24 @@ export const scheduleTaskReminderNotification = async (
   }
   const delay = at.getTime() - Date.now();
   if (delay > 0 && delay < 2_147_483_647) {
-    window.setTimeout(() => {
+    const existing = webTaskReminderTimers.get(id);
+    if (existing) window.clearTimeout(existing);
+    const timer = window.setTimeout(() => {
+      webTaskReminderTimers.delete(id);
       if ("Notification" in window && Notification.permission === "granted") {
         new Notification(title, { body, icon: "/favicon.ico" });
       }
     }, delay);
+    webTaskReminderTimers.set(id, timer);
   }
 };
 
 export const cancelTaskReminderNotification = async (id: number) => {
+  const webTimer = webTaskReminderTimers.get(id);
+  if (webTimer) {
+    window.clearTimeout(webTimer);
+    webTaskReminderTimers.delete(id);
+  }
   if (!Capacitor.isNativePlatform()) return;
   await LocalNotifications.cancel({ notifications: [{ id }] }).catch(() => undefined);
 };
@@ -162,6 +173,10 @@ export const cancelTaskReminderNotification = async (id: number) => {
 /** Schedule the next midnight notification for unlogged gaps. */
 export const scheduleDailyMidnightNotification = async (enabled: boolean, body?: string) => {
   const message = body ?? "There are some time slots that you have not kept logs for.";
+  if (webMidnightTimer !== undefined) {
+    window.clearTimeout(webMidnightTimer);
+    webMidnightTimer = undefined;
+  }
 
   if (Capacitor.isNativePlatform()) {
     await ensureChannel();
@@ -207,7 +222,8 @@ export const scheduleDailyMidnightNotification = async (enabled: boolean, body?:
   next.setHours(0, 0, 0, 0);
   const delay = next.getTime() - Date.now();
   if (delay > 0 && delay < 86_400_000) {
-    setTimeout(() => {
+    webMidnightTimer = window.setTimeout(() => {
+      webMidnightTimer = undefined;
       if ("Notification" in window && Notification.permission === "granted") {
         new Notification("Unlogged Activity Gaps", { body: message });
       }

@@ -358,6 +358,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   const decryptedMessageVersionRef = useRef<Map<string, number>>(new Map());
   const pushInitUserIdRef = useRef<string | null>(null);
   const lsSaveTimerRef = useRef<number | undefined>(undefined);
+  const midnightScheduleKeyRef = useRef("");
   const stateRef = useRef(state);
   const appActiveRef = useRef(appActive);
   stateRef.current = state;
@@ -847,6 +848,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   useEffect(() => {
     if (!currentUser) return;
     if (!appActive || currentUser.notificationsEnabled === false) {
+      midnightScheduleKeyRef.current = "";
       scheduleDailyMidnightNotification(false);
       return;
     }
@@ -854,6 +856,9 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     const todayPosts = postsInLocalDay(state.posts, currentUser.id, todayStart);
     const coverage = analyzeDayCoverage(todayPosts, todayStart);
     const body = coverage.isComplete ? undefined : unloggedGapsBody(coverage.gaps);
+    const scheduleKey = `${currentUser.id}:${dateKey(todayStart)}:${coverage.isComplete}:${body ?? ""}`;
+    if (scheduleKey === midnightScheduleKeyRef.current) return;
+    midnightScheduleKeyRef.current = scheduleKey;
     scheduleDailyMidnightNotification(!coverage.isComplete, body);
   }, [currentUser, appActive, state.posts]);
 

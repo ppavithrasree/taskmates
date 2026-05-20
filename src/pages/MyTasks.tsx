@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Bell, CalendarDays, Check, Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/components/layout/AppShell";
@@ -9,16 +9,8 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useApp } from "@/context/AppContext";
 import { formatDayAwareDateTime } from "@/lib/dateTime";
+import { loadLocalTasks, notificationIdForTask, saveLocalTasks, TASKS_CHANGED_EVENT, type LocalTask } from "@/lib/localTasks";
 import { cancelTaskReminderNotification, scheduleTaskReminderNotification } from "@/lib/notifications";
-
-type LocalTask = {
-  id: string;
-  content: string;
-  completed: boolean;
-  reminderAt?: number;
-  createdAt: number;
-  updatedAt: number;
-};
 
 type TaskDraft = {
   content: string;
@@ -27,14 +19,6 @@ type TaskDraft = {
   minute: string;
   period: "am" | "pm";
   reminderEnabled: boolean;
-};
-
-const keyFor = (userId: string) => `taskmates_local_tasks_${userId}`;
-
-const notificationIdFor = (taskId: string) => {
-  let hash = 0;
-  for (const char of taskId) hash = ((hash << 5) - hash + char.charCodeAt(0)) | 0;
-  return 700000 + Math.abs(hash % 200000);
 };
 
 const draftFromTask = (task?: LocalTask, format: "12" | "24" = "24"): TaskDraft => {
@@ -69,19 +53,44 @@ const MyTasks = () => {
   const [open, setOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<TaskDraft>(() => draftFromTask(undefined, timeFormat));
+  const tasksJsonRef = useRef("[]");
+  const skipNextSaveRef = useRef(false);
 
   useEffect(() => {
     if (!currentUser) return;
-    try {
-      setTasks(JSON.parse(localStorage.getItem(keyFor(currentUser.id)) ?? "[]") as LocalTask[]);
-    } catch {
-      setTasks([]);
-    }
+    tasksJsonRef.current = "";
+    const loadTasks = () => {
+      const loaded = loadLocalTasks(currentUser.id);
+      const json = JSON.stringify(loaded);
+      if (json === tasksJsonRef.current) return;
+      tasksJsonRef.current = json;
+      skipNextSaveRef.current = true;
+      setTasks(loaded);
+    };
+    const onTasksChanged = (event: Event) => {
+      const detail = (event as CustomEvent<{ userId?: string }>).detail;
+      if (!detail?.userId || detail.userId === currentUser.id) loadTasks();
+    };
+    loadTasks();
+    window.addEventListener(TASKS_CHANGED_EVENT, onTasksChanged);
+    window.addEventListener("storage", loadTasks);
+    return () => {
+      window.removeEventListener(TASKS_CHANGED_EVENT, onTasksChanged);
+      window.removeEventListener("storage", loadTasks);
+    };
   }, [currentUser]);
 
   useEffect(() => {
     if (!currentUser) return;
-    localStorage.setItem(keyFor(currentUser.id), JSON.stringify(tasks));
+    const json = JSON.stringify(tasks);
+    if (skipNextSaveRef.current) {
+      skipNextSaveRef.current = false;
+      tasksJsonRef.current = json;
+      return;
+    }
+    if (json === tasksJsonRef.current) return;
+    tasksJsonRef.current = json;
+    saveLocalTasks(currentUser.id, tasks);
   }, [currentUser, tasks]);
 
   const sortedTasks = useMemo(
@@ -126,9 +135,9 @@ const MyTasks = () => {
       updatedAt: now,
     };
     setTasks((items) => editingId ? items.map((task) => task.id === editingId ? nextTask : task) : [nextTask, ...items]);
-    await cancelTaskReminderNotification(notificationIdFor(id));
+    await cancelTaskReminderNotification(notificationIdForTask(id));
     if (reminderAt) {
-      await scheduleTaskReminderNotification(notificationIdFor(id), "Task reminder", content, new Date(reminderAt), "/tasks");
+      await scheduleTaskReminderNotification(notificationIdForTask(id), "Task reminder", content, new Date(reminderAt), "/tasks");
     }
     setOpen(false);
     toast.success(editingId ? "Task updated." : "Task added.");
@@ -136,7 +145,7 @@ const MyTasks = () => {
 
   const deleteTask = async (task: LocalTask) => {
     setTasks((items) => items.filter((item) => item.id !== task.id));
-    await cancelTaskReminderNotification(notificationIdFor(task.id));
+    await cancelTaskReminderNotification(notificationIdForTask(task.id));
     toast.success("Task deleted.");
   };
 

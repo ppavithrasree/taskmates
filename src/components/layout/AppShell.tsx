@@ -51,22 +51,22 @@ export const AppShell = ({
     <div className="min-h-dvh bg-background text-foreground transition-colors duration-300">
       {/* ── Top Header with Glassmorphism ── */}
       <header className="sticky top-0 z-30 border-b border-border/60 bg-background/80 backdrop-blur-xl">
-        <div className="mx-auto flex h-14 max-w-5xl items-center justify-between px-4">
-          <div className="flex items-center gap-2.5">
+        <div className="mx-auto flex h-14 max-w-5xl items-center justify-between gap-2 px-3 sm:px-4">
+          <div className="flex min-w-0 items-center gap-2">
             <span className="relative block size-2.5 rounded-full bg-gradient-primary shadow-glow">
               <span className="absolute inset-0 rounded-full bg-gradient-primary animate-ping opacity-40" />
             </span>
-            <h1 className="text-base font-bold tracking-tight">{title ?? "TaskMates"}</h1>
+            <h1 className="truncate text-base font-bold tracking-tight">{title ?? "TaskMates"}</h1>
           </div>
           <div className="flex items-center gap-0.5">
-            <Button variant="ghost" size="icon" onClick={() => navigate("/notifications")} aria-label="Notifications" className="relative hover:bg-primary/10 transition-smooth">
+            <Button variant="ghost" size="icon" onClick={() => navigate("/notifications")} aria-label="Notifications" className="relative size-9 rounded-md hover:bg-primary/10 transition-smooth">
               <Bell className="size-[18px]" />
               <Badge count={unreadNotificationCount} />
             </Button>
-            <Button variant="ghost" size="icon" onClick={() => navigate("/tasks")} aria-label="My tasks" className="hover:bg-accent/10 transition-smooth">
+            <Button variant="ghost" size="icon" onClick={() => navigate("/tasks")} aria-label="My tasks" className="size-9 rounded-md hover:bg-accent/10 transition-smooth">
               <ClipboardList className="size-[18px]" />
             </Button>
-            <Button variant="ghost" size="icon" onClick={signOut} aria-label="Logout" className="hover:bg-destructive/10 transition-smooth">
+            <Button variant="ghost" size="icon" onClick={signOut} aria-label="Logout" className="size-9 rounded-md hover:bg-destructive/10 transition-smooth">
               <LogOut className="size-[18px]" />
             </Button>
           </div>

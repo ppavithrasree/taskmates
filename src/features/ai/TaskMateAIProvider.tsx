@@ -10,6 +10,7 @@ import { AI_NAME, AI_STORAGE_KEYS } from "./constants";
 import { buildAiContext } from "./actions";
 import { askGemini } from "./geminiService";
 import { loadGeminiKey, loadProcessedMentions, saveProcessedMentions } from "./storage";
+import { loadScheduledAiActions, saveScheduledAiActions } from "./scheduledActions";
 import { useAiSettings } from "./useAiSettings";
 
 const AiChat = lazy(() => import("./AiChat").then((module) => ({ default: module.AiChat })));
@@ -45,6 +46,7 @@ export const TaskMateAIProvider = () => {
   const processedRef = useRef<Set<string>>(new Set());
   const mentionBusyRef = useRef(false);
   const lastMentionAtRef = useRef(0);
+  const scheduledBusyRef = useRef(false);
 
   const showFloatingButton = enabled && !open && location.pathname === "/dashboard";
   const mentionPattern = useMemo(() => /@(taskmate ai|mateai)\b/i, []);
@@ -63,6 +65,46 @@ export const TaskMateAIProvider = () => {
   useEffect(() => {
     if (!enabled) setOpen(false);
   }, [enabled]);
+
+  useEffect(() => {
+    if (!enabled || !app.currentUser?.id) return;
+    const userId = app.currentUser.id;
+
+    const processScheduled = () => {
+      if (scheduledBusyRef.current) return;
+      const actions = loadScheduledAiActions(userId);
+      const now = Date.now();
+      const due = actions.filter((action) => action.runAt <= now);
+      if (due.length === 0) return;
+      scheduledBusyRef.current = true;
+
+      void (async () => {
+        const completed = new Set<string>();
+        try {
+          for (const action of due) {
+            const group = app.visibleGroups.find((item) => item.id === action.groupId);
+            if (!group) continue;
+            const result = await app.addGroupMessage(group.id, action.content);
+            if (result.ok) completed.add(action.id);
+          }
+          if (completed.size > 0) {
+            const remaining = loadScheduledAiActions(userId).filter((action) => !completed.has(action.id));
+            saveScheduledAiActions(userId, remaining);
+          }
+        } finally {
+          scheduledBusyRef.current = false;
+        }
+      })();
+    };
+
+    processScheduled();
+    const interval = window.setInterval(processScheduled, 15_000);
+    window.addEventListener("taskmates-ai-scheduled-actions", processScheduled);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("taskmates-ai-scheduled-actions", processScheduled);
+    };
+  }, [enabled, app]);
 
   useEffect(() => {
     if (!enabled || !app.currentUser?.id || !hasKey) return;

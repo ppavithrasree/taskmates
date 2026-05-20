@@ -434,25 +434,25 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
 
   return (
     <AppShell title="Groups" mainClassName="h-[calc(100dvh-3.5rem)] overflow-hidden pb-0">
-      <div className="mx-auto flex h-full max-w-3xl flex-col px-4 pb-[calc(env(safe-area-inset-bottom)+5.5rem)] pt-4">
-        <header className="mb-4 flex items-center gap-3 rounded-lg border border-border bg-card p-3 shadow-soft">
-          <Button asChild size="icon" variant="ghost" className="shrink-0">
+      <div className="mx-auto flex h-full max-w-3xl flex-col px-3 pb-[calc(env(safe-area-inset-bottom)+5.5rem)] pt-3 sm:px-4 sm:pt-4">
+        <header className="mb-3 flex items-center gap-1.5 rounded-lg border border-border bg-card px-2 py-2 shadow-soft sm:gap-2 sm:px-3">
+          <Button asChild size="icon" variant="ghost" className="size-8 shrink-0 rounded-md">
             <Link to="/groups"><ArrowLeft className="size-4" /></Link>
           </Button>
-          <GroupAvatar name={group.name} />
+          <GroupAvatar name={group.name} compact />
           <Link to={`/groups/${group.id}/info`} className="min-w-0 flex-1 text-left">
-            <h1 className="truncate text-lg font-black">{group.name}</h1>
+            <h1 className="truncate text-base font-black sm:text-lg">{group.name}</h1>
             <p className={`truncate text-xs ${typingUsers.length ? "font-bold text-success" : "text-muted-foreground"}`}>
               {typingUsers.length ? `${typingUsers.join(", ")} typing...` : `${onlineCount} users online`}
             </p>
           </Link>
-          <Button size="icon" variant="ghost" aria-label="Search messages" onClick={() => setSearchOpen(true)}>
+          <Button size="icon" variant="ghost" aria-label="Search messages" onClick={() => setSearchOpen(true)} className="size-8 shrink-0 rounded-md">
             <Search className="size-4" />
           </Button>
-          <Button asChild size="icon" variant="ghost" aria-label="Group info">
+          <Button asChild size="icon" variant="ghost" aria-label="Group info" className="size-8 shrink-0 rounded-md">
             <Link to={`/groups/${group.id}/info`}><Info className="size-4" /></Link>
           </Button>
-          <Button size="icon" variant="ghost" aria-label="Clear chat" onClick={() => setClearChatOpen(true)}>
+          <Button size="icon" variant="ghost" aria-label="Clear chat" onClick={() => setClearChatOpen(true)} className="size-8 shrink-0 rounded-md">
             <Trash2 className="size-4" />
           </Button>
         </header>
@@ -847,8 +847,8 @@ const GroupInfo = ({ groupId }: { groupId: string }) => {
   return (
     <AppShell title="Group info">
       <div className="mx-auto max-w-3xl space-y-5 px-4 py-4">
-        <header className="flex items-center gap-3 rounded-lg border border-border bg-card p-3 shadow-soft">
-          <Button asChild size="icon" variant="ghost" className="shrink-0">
+        <header className="flex items-center gap-2 rounded-lg border border-border bg-card px-2 py-2 shadow-soft sm:px-3">
+          <Button asChild size="icon" variant="ghost" className="size-8 shrink-0 rounded-md">
             <Link to={`/groups/${group.id}`}><ArrowLeft className="size-4" /></Link>
           </Button>
           <div className="min-w-0">
@@ -1221,15 +1221,15 @@ const MemberPicker = ({
   </div>
 );
 
-const GroupAvatar = ({ name, large = false }: { name: string; large?: boolean }) => (
-  <div className={`${large ? "size-20" : "size-12"} relative shrink-0`}>
-    <div className={`absolute left-0 top-2 flex ${large ? "size-11" : "size-7"} items-center justify-center rounded-full bg-accent/15 text-accent`}>
-      <UsersRound className={large ? "size-5" : "size-3.5"} />
+const GroupAvatar = ({ name, large = false, compact = false }: { name: string; large?: boolean; compact?: boolean }) => (
+  <div className={`${large ? "size-20" : compact ? "size-9" : "size-12"} relative shrink-0`}>
+    <div className={`absolute left-0 top-2 flex ${large ? "size-11" : compact ? "size-5" : "size-7"} items-center justify-center rounded-full bg-accent/15 text-accent`}>
+      <UsersRound className={large ? "size-5" : compact ? "size-3" : "size-3.5"} />
     </div>
-    <div className={`absolute right-0 top-2 flex ${large ? "size-11" : "size-7"} items-center justify-center rounded-full bg-success/15 text-success`}>
-      <UsersRound className={large ? "size-5" : "size-3.5"} />
+    <div className={`absolute right-0 top-2 flex ${large ? "size-11" : compact ? "size-5" : "size-7"} items-center justify-center rounded-full bg-success/15 text-success`}>
+      <UsersRound className={large ? "size-5" : compact ? "size-3" : "size-3.5"} />
     </div>
-    <div className={`absolute bottom-0 left-1/2 flex ${large ? "size-14" : "size-9"} -translate-x-1/2 items-center justify-center rounded-full bg-gradient-primary font-black text-primary-foreground shadow-md`}>
+    <div className={`absolute bottom-0 left-1/2 flex ${large ? "size-14" : compact ? "size-7 text-xs" : "size-9"} -translate-x-1/2 items-center justify-center rounded-full bg-gradient-primary font-black text-primary-foreground shadow-md`}>
       {name.charAt(0).toUpperCase()}
     </div>
   </div>

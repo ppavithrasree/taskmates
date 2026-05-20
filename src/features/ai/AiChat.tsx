@@ -1,8 +1,20 @@
 import { FormEvent, memo, useEffect, useMemo, useRef, useState } from "react";
-import { Bot, Mic, Send, Sparkles, Wand2 } from "lucide-react";
+import { Bot, Info, Send, Sparkles, Trash2, Wand2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Textarea } from "@/components/ui/textarea";
 import { useApp } from "@/context/AppContext";
 import { cn } from "@/lib/utils";
@@ -20,12 +32,23 @@ const makeMessage = (role: AiChatMessage["role"], content: string, kind: AiChatM
   createdAt: Date.now(),
 });
 
+const chatKeyFor = (userId?: string | null) => `${AI_STORAGE_KEYS.chat}:${userId ?? "guest"}`;
+
+const capabilities = [
+  "Manage connection requests and accepted connections.",
+  "Create, rename, mute, leave, and update groups and members.",
+  "Send, schedule, edit, pin, react to, clear, and delete group messages where your account is allowed.",
+  "Create, edit, delete, like, and comment on visible posts.",
+  "Update theme, time format, privacy, notifications, auto-delete duration, reminders, and weekly recaps.",
+  "Read the recent app context provided to it and reply when tagged in groups.",
+];
+
 export const AiChat = memo(({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) => {
   const app = useApp();
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<AiChatMessage[]>(() => {
     try {
-      return JSON.parse(sessionStorage.getItem(AI_STORAGE_KEYS.chat) ?? "[]") as AiChatMessage[];
+      return JSON.parse(localStorage.getItem(chatKeyFor(app.currentUser?.id)) ?? "[]") as AiChatMessage[];
     } catch {
       return [];
     }
@@ -33,10 +56,26 @@ export const AiChat = memo(({ open, onOpenChange }: { open: boolean; onOpenChang
   const [typing, setTyping] = useState(false);
   const listRef = useRef<HTMLDivElement | null>(null);
   const lastSentRef = useRef(0);
+  const skipNextSaveRef = useRef(false);
 
   useEffect(() => {
-    sessionStorage.setItem(AI_STORAGE_KEYS.chat, JSON.stringify(messages.slice(-30)));
-  }, [messages]);
+    try {
+      skipNextSaveRef.current = true;
+      const saved = JSON.parse(localStorage.getItem(chatKeyFor(app.currentUser?.id)) ?? "[]") as AiChatMessage[];
+      setMessages(saved);
+    } catch {
+      skipNextSaveRef.current = true;
+      setMessages([]);
+    }
+  }, [app.currentUser?.id]);
+
+  useEffect(() => {
+    if (skipNextSaveRef.current) {
+      skipNextSaveRef.current = false;
+      return;
+    }
+    localStorage.setItem(chatKeyFor(app.currentUser?.id), JSON.stringify(messages.slice(-60)));
+  }, [app.currentUser?.id, messages]);
 
   useEffect(() => {
     if (!open) return;
@@ -54,6 +93,12 @@ export const AiChat = memo(({ open, onOpenChange }: { open: boolean; onOpenChang
     [messages.length]
   );
   const displayMessages = starter ? [starter, ...messages] : messages;
+
+  const clearChat = () => {
+    setMessages([]);
+    localStorage.removeItem(chatKeyFor(app.currentUser?.id));
+    toast.success("AI chat cleared.");
+  };
 
   const send = async (text: string) => {
     const clean = text.trim();
@@ -76,7 +121,7 @@ export const AiChat = memo(({ open, onOpenChange }: { open: boolean; onOpenChang
         return;
       }
       const apiKey = await loadGeminiKey(app.currentUser?.id);
-      const looksLikeAction = /\b(send|edit|update|create|post|change|fix|correct|switch|remind|reminder|announce|tell)\b/i.test(clean);
+      const looksLikeAction = /\b(send|schedule|edit|update|create|post|comment|reply|delete|remove|change|fix|correct|switch|remind|reminder|announce|tell|connect|friend|accept|reject|decline|group|member|mute|unmute|leave|exit|pin|react|like|unlike|privacy|notification|read)\b/i.test(clean);
       if (apiKey && looksLikeAction) {
         const inferred = await inferAiCommandWithGemini({
           apiKey,
@@ -91,10 +136,10 @@ export const AiChat = memo(({ open, onOpenChange }: { open: boolean; onOpenChang
           }
         }
       }
-      if (looksLikeAction && /\b(group|message|post|time|timing)\b/i.test(clean)) {
+      if (looksLikeAction && /\b(group|message|post|time|timing|connection|friend|request|member|comment|notification|privacy)\b/i.test(clean)) {
         setMessages((items) => [...items, makeMessage(
           "assistant",
-          "I could not map that to a safe app action. Try naming the group or the post timing clearly, and I will apply it without extra Firebase reads.",
+          "I could not map that to a safe app action. Try naming the group, post, message text, or timing clearly.",
           "action"
         )]);
         return;
@@ -106,7 +151,7 @@ export const AiChat = memo(({ open, onOpenChange }: { open: boolean; onOpenChang
       const answer = await askGemini({
         apiKey,
         prompt: clean,
-        history: messages,
+        history: messages.slice(-14),
         context: buildAiContext(app),
       });
       setMessages((items) => [...items, makeMessage("assistant", answer)]);
@@ -134,6 +179,44 @@ export const AiChat = memo(({ open, onOpenChange }: { open: boolean; onOpenChang
               <DialogTitle className="truncate text-base">{AI_NAME}</DialogTitle>
               <p className="text-xs text-muted-foreground">Collaboration and productivity assistant</p>
             </div>
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button type="button" size="icon" variant="ghost" className="size-9 shrink-0" aria-label="What TaskMate AI can do">
+                  <Info className="size-4" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent align="end" className="w-80">
+                <div className="space-y-2">
+                  <p className="text-sm font-black">What I can do</p>
+                  <ul className="space-y-1.5 text-xs leading-relaxed text-muted-foreground">
+                    {capabilities.map((item) => (
+                      <li key={item}>{item}</li>
+                    ))}
+                  </ul>
+                </div>
+              </PopoverContent>
+            </Popover>
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button type="button" size="icon" variant="ghost" className="size-9 shrink-0 text-destructive hover:text-destructive" aria-label="Delete AI chat">
+                  <Trash2 className="size-4" />
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Delete AI chat?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    This clears the locally stored conversation for this account. App posts, groups, and messages are not changed.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction onClick={clearChat} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+                    Delete chat
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
           </div>
         </DialogHeader>
 
@@ -180,16 +263,14 @@ export const AiChat = memo(({ open, onOpenChange }: { open: boolean; onOpenChang
             ))}
           </div>
           <form onSubmit={submit} className="flex items-end gap-2">
-            <Button type="button" size="icon" variant="outline" className="h-11 w-11 shrink-0" aria-label="Voice input coming soon" title="Voice input coming soon">
-              <Mic className="size-4" />
-            </Button>
             <div className="relative flex-1">
               <Wand2 className="pointer-events-none absolute left-3 top-3 size-4 text-muted-foreground" />
               <Textarea
                 value={input}
                 onChange={(event) => setInput(event.target.value)}
                 placeholder={`Message ${AI_NAME}`}
-                className="max-h-32 min-h-11 resize-none rounded-xl bg-background pl-9 pr-3"
+                rows={3}
+                className="max-h-40 min-h-24 resize-y rounded-xl bg-background pl-9 pr-3"
                 onKeyDown={(event) => {
                   if (event.key === "Enter" && !event.shiftKey) {
                     event.preventDefault();
