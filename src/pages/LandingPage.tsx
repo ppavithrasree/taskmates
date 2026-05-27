@@ -16,7 +16,7 @@ const LandingPage = () => {
         </div>
         <h1 className="text-4xl font-black leading-tight">TaskMates</h1>
         <p className="mt-3 text-base leading-relaxed text-muted-foreground">
-          A local-first daily activity blog for logging time ranges, checking full-day coverage, and syncing when the internet comes back.
+          A smart community-driven task and activity platform for posting tasks, tracking progress, collaborating with others, and staying productive anytime.
         </p>
         <div className="mt-7 grid grid-cols-2 gap-3 text-sm">
           <Feature icon={WifiOff} text="Offline ready" />

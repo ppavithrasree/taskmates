@@ -301,6 +301,17 @@ const AiSettingsCard = ({ userId }: { userId: string }) => {
               </Button>
             )}
           </div>
+          <p className="text-xs text-muted-foreground">
+            Get your free API key from{" "}
+            <a
+              href="https://aistudio.google.com/apikey"
+              target="_blank"
+              rel="noreferrer"
+              className="font-bold text-primary underline underline-offset-2"
+            >
+              aistudio.google.com/apikey
+            </a>
+          </p>
 
           {hasKey && !editing ? (
             <Input

@@ -132,6 +132,15 @@
     background-attachment: fixed;
     transition: background-color 0.3s ease, color 0.3s ease;
     overflow-x: hidden;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  input,
+  textarea,
+  [contenteditable="true"] {
+    -webkit-user-select: text;
+    user-select: text;
   }
 
   input[type="date"]::-webkit-calendar-picker-indicator,

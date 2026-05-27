@@ -275,3 +275,41 @@ export const subscribeFirebaseState = (
   };
 };
 
+export const subscribeUserConnections = (
+  userId: string,
+  onData: (connections: Connection[]) => void
+) => {
+  if (!hasFirebaseConfig) return () => undefined;
+  let closed = false;
+  let unsubs: Unsubscribe[] = [];
+
+  getServices().then(async (services) => {
+    if (!services || closed) return;
+    const { collection, onSnapshot, query, where } = await import("firebase/firestore");
+    if (closed) return;
+
+    let sentConnections: Connection[] = [];
+    let receivedConnections: Connection[] = [];
+    const emitConnections = () => {
+      const byId = new Map([...sentConnections, ...receivedConnections].map((item) => [item.id, item]));
+      onData([...byId.values()]);
+    };
+
+    unsubs = [
+      onSnapshot(query(collection(services.db, "connections"), where("senderId", "==", userId)), (snapshot) => {
+        sentConnections = snapshot.docs.map((item) => normalizeEntity<Connection>(item.id, item.data()));
+        emitConnections();
+      }, () => undefined),
+      onSnapshot(query(collection(services.db, "connections"), where("receiverId", "==", userId)), (snapshot) => {
+        receivedConnections = snapshot.docs.map((item) => normalizeEntity<Connection>(item.id, item.data()));
+        emitConnections();
+      }, () => undefined),
+    ];
+  });
+
+  return () => {
+    closed = true;
+    unsubs.forEach((unsubscribe) => unsubscribe());
+  };
+};
+

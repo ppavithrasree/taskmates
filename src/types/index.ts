@@ -42,6 +42,7 @@ export interface PostComment {
   id: string;
   userId: string;
   content: string;
+  parentCommentId?: string;
   createdAt: number;
   updatedAt: number;
 }

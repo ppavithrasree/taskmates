@@ -40,6 +40,7 @@ export const TaskMateAIProvider = () => {
   const location = useLocation();
   const { enabled, hasKey } = useAiSettings(app.currentUser?.id);
   const [open, setOpen] = useState(false);
+  const [dialogOpen, setDialogOpen] = useState(false);
   const [position, setPosition] = useState<Position>(() => typeof window === "undefined" ? { x: 24, y: 120 } : loadPosition());
   const [dragging, setDragging] = useState(false);
   const dragRef = useRef<{ pointerId: number; dx: number; dy: number; moved: boolean } | null>(null);
@@ -48,7 +49,7 @@ export const TaskMateAIProvider = () => {
   const lastMentionAtRef = useRef(0);
   const scheduledBusyRef = useRef(false);
 
-  const showFloatingButton = enabled && !open && location.pathname === "/dashboard";
+  const showFloatingButton = enabled && !open && !dialogOpen && location.pathname === "/dashboard";
   const mentionPattern = useMemo(() => /@(taskmate ai|mateai)\b/i, []);
 
   useEffect(() => {
@@ -65,6 +66,14 @@ export const TaskMateAIProvider = () => {
   useEffect(() => {
     if (!enabled) setOpen(false);
   }, [enabled]);
+
+  useEffect(() => {
+    const updateDialogState = () => setDialogOpen(Boolean(document.querySelector('[role="dialog"]')));
+    updateDialogState();
+    const observer = new MutationObserver(updateDialogState);
+    observer.observe(document.body, { childList: true, subtree: true });
+    return () => observer.disconnect();
+  }, [location.pathname]);
 
   useEffect(() => {
     if (!enabled || !app.currentUser?.id) return;

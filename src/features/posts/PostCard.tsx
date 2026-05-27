@@ -25,6 +25,7 @@ export const PostCard = ({ post }: { post: Post }) => {
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
   const [editingComment, setEditingComment] = useState("");
   const [comment, setComment] = useState("");
+  const [replyToCommentId, setReplyToCommentId] = useState<string | null>(null);
   const editHistoryRef = useRef(false);
   const author = users.find((user) => user.id === post.userId);
   const isMine = currentUser?.id === post.userId;
@@ -58,12 +59,13 @@ export const PostCard = ({ post }: { post: Post }) => {
 
   const submitComment = (event: React.FormEvent) => {
     event.preventDefault();
-    const result = addPostComment(post.id, comment);
+    const result = addPostComment(post.id, comment, replyToCommentId ?? undefined);
     if (!result.ok) {
       toast.error(result.error);
       return;
     }
     setComment("");
+    setReplyToCommentId(null);
   };
 
   const saveComment = (event: React.FormEvent) => {
@@ -145,10 +147,12 @@ export const PostCard = ({ post }: { post: Post }) => {
           ) : (
             (post.comments ?? []).map((item) => {
               const commenter = users.find((user) => user.id === item.userId);
+              const parentComment = item.parentCommentId ? (post.comments ?? []).find((parent) => parent.id === item.parentCommentId) : undefined;
+              const parentCommenter = parentComment ? users.find((user) => user.id === parentComment.userId) : undefined;
               const canDelete = currentUser?.id === item.userId || currentUser?.id === post.userId;
               const canEdit = currentUser?.id === item.userId;
               return (
-                <div key={item.id} className="rounded-lg border border-primary/10 bg-gradient-soft px-3 py-2 text-sm dark:border-primary/15">
+                <div key={item.id} className={`rounded-lg border border-primary/10 bg-gradient-soft px-3 py-2 text-sm dark:border-primary/15 ${item.parentCommentId ? "ml-5" : ""}`}>
                   <div className="mb-1 flex items-center justify-between gap-2">
                     <Link to={commenter ? `/profile/${commenter.username}` : "#"} className="truncate text-xs font-black text-primary">
                       {commenter?.username ?? "unknown"}
@@ -167,6 +171,13 @@ export const PostCard = ({ post }: { post: Post }) => {
                           <Pencil className="size-3.5" />
                         </button>
                       )}
+                      <button
+                        type="button"
+                        className="text-xs font-bold text-primary hover:text-accent"
+                        onClick={() => setReplyToCommentId(item.id)}
+                      >
+                        Reply
+                      </button>
                       {canDelete && (
                         <button
                           type="button"
@@ -194,13 +205,31 @@ export const PostCard = ({ post }: { post: Post }) => {
                       </div>
                     </form>
                   ) : (
-                    <p className="whitespace-pre-wrap break-words">{item.content}</p>
+                    <>
+                      {parentComment && (
+                        <button
+                          type="button"
+                          className="mb-1 block w-full rounded border-l-2 border-primary bg-background/70 px-2 py-1 text-left text-xs text-muted-foreground"
+                          onClick={() => setReplyToCommentId(parentComment.id)}
+                        >
+                          <span className="block truncate font-black text-primary">{parentCommenter?.username ?? "unknown"}</span>
+                          <span className="block truncate">{parentComment.content}</span>
+                        </button>
+                      )}
+                      <p className="whitespace-pre-wrap break-words">{item.content}</p>
+                    </>
                   )}
                 </div>
               );
             })
           )}
-          <form onSubmit={submitComment} className="flex items-end gap-2">
+          <form onSubmit={submitComment} className="relative flex items-end gap-2 pt-12">
+            {replyToCommentId && (
+              <div className="absolute left-0 right-0 -top-12 rounded-lg border border-border bg-card px-3 py-2 text-xs shadow-soft">
+                Replying to {users.find((user) => user.id === (post.comments ?? []).find((item) => item.id === replyToCommentId)?.userId)?.username ?? "comment"}
+                <button type="button" className="ml-2 font-bold text-primary" onClick={() => setReplyToCommentId(null)}>Cancel</button>
+              </div>
+            )}
             <textarea
               value={comment}
               onChange={(event) => setComment(event.target.value)}

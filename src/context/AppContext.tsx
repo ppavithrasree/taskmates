@@ -24,6 +24,10 @@ const SESSION_KEY = "taskmates_activity_session_v1";
 const TOKEN_KEY = "taskmates_firebase_token_v1";
 const LAST_SEEN_KEY = "taskmates_last_seen_cache_v1";
 const DEFAULT_THEME: "light" | "dark" = "dark";
+const DEFAULT_RETENTION_DAYS = 5;
+const RETENTION_DEFAULT_MIGRATION_KEY = "taskmates_retention_default_migrated_v1";
+export const PUBLIC_CHAT_ID = "taskmates_public_chat";
+const PUBLIC_CHAT_UNMUTED_ID = `${PUBLIC_CHAT_ID}:unmuted`;
 
 export interface AppContextValue {
   currentUser: User | null;
@@ -61,6 +65,7 @@ export interface AppContextValue {
   markGroupMessagesRead: (groupId: string) => void;
   markGroupNotificationsRead: (groupId: string) => void;
   markNotificationsForLinkRead: (link: string) => void;
+  deleteNotification: (notificationId: string) => void;
   setActiveGroupChat: (groupId: string | null) => void;
   toggleMuteGroup: (groupId: string) => void;
   isGroupMuted: (groupId: string) => boolean;
@@ -68,7 +73,7 @@ export interface AppContextValue {
   updatePost: (id: string, patch: Partial<Pick<Post, "startTime" | "endTime" | "content" | "visibility" | "customUsernames">>) => AuthResult;
   deletePost: (id: string) => void;
   togglePostLike: (postId: string) => AuthResult;
-  addPostComment: (postId: string, content: string) => AuthResult;
+  addPostComment: (postId: string, content: string, parentCommentId?: string) => AuthResult;
   updatePostComment: (postId: string, commentId: string, content: string) => AuthResult;
   deletePostComment: (postId: string, commentId: string) => AuthResult;
   updateUserSettings: (patch: Partial<Pick<User, "privacy" | "customUsernames" | "retentionDays" | "notificationsEnabled">>) => void;
@@ -121,7 +126,7 @@ const makeUser = (id: string, username: string, createdAt: number, password: str
   email: usernameToEmail(username),
   privacy: "public",
   customUsernames: [],
-  retentionDays: 15,
+  retentionDays: DEFAULT_RETENTION_DAYS,
   createdAt,
   updatedAt: createdAt,
   passwordHash: hashPassword(password),
@@ -255,6 +260,21 @@ const mergeComments = (a?: PostComment[], b?: PostComment[]) => {
     if (!existing || comment.updatedAt >= existing.updatedAt) map.set(comment.id, comment);
   }
   return [...map.values()].sort((left, right) => left.createdAt - right.createdAt);
+};
+
+const makePublicChatGroup = (users: User[], now = Date.now()): Group => ({
+  id: PUBLIC_CHAT_ID,
+  name: "Announcements",
+  memberIds: [...new Set(users.map((user) => user.id))],
+  createdBy: "system",
+  createdAt: 0,
+  updatedAt: now,
+});
+
+const resolveGroup = (groups: Group[], users: User[], groupId: string, messages: GroupMessage[] = []) => {
+  if (groupId !== PUBLIC_CHAT_ID) return groups.find((item) => item.id === groupId);
+  const lastMessageAt = Math.max(0, ...messages.filter((item) => item.groupId === PUBLIC_CHAT_ID).map((item) => item.createdAt));
+  return makePublicChatGroup(users, lastMessageAt || Date.now());
 };
 
 const sameMap = (a?: Record<string, string>, b?: Record<string, string>) =>
@@ -427,6 +447,19 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     [online]
   );
 
+  useEffect(() => {
+    if (!currentUser || currentUser.retentionDays !== 15) return;
+    const migrationKey = `${RETENTION_DEFAULT_MIGRATION_KEY}:${currentUser.id}`;
+    if (localStorage.getItem(migrationKey)) return;
+    localStorage.setItem(migrationKey, "1");
+    const updated = { ...currentUser, retentionDays: DEFAULT_RETENTION_DAYS, updatedAt: Date.now() };
+    setState((snapshot) => ({
+      ...snapshot,
+      users: snapshot.users.map((user) => user.id === updated.id ? updated : user),
+    }));
+    commitOperation(queueFor("users", "upsert", updated.id, updated));
+  }, [currentUser, commitOperation]);
+
 
 
   useEffect(() => {
@@ -573,7 +606,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
 
         // Merge notifications — only keep ones for current user and less than 10 days old
         const currentRemoteUser = remote.users?.find((user) => user.id === currentUserId) ?? snapshot.users.find((user) => user.id === currentUserId);
-        const notificationCutoff = Date.now() - (currentRemoteUser?.retentionDays ?? 15) * 86_400_000;
+        const notificationCutoff = Date.now() - (currentRemoteUser?.retentionDays ?? DEFAULT_RETENTION_DAYS) * 86_400_000;
         let nextNotifications = remote.notifications
           ? remoteWithPendingLocal(snapshot.notifications, remote.notifications)
           : snapshot.notifications;
@@ -662,7 +695,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     for (const message of state.groupMessages) {
       if (message.senderId === currentUser.id) continue;
       if (deliveryProcessedRef.current.has(message.id)) continue;
-      const group = state.groups.find((item) => item.id === message.groupId);
+      const group = resolveGroup(state.groups, state.users, message.groupId, state.groupMessages);
       if (!group?.memberIds.includes(currentUser.id)) continue;
       const deliveredTo = message.deliveredTo ?? [message.senderId];
       if (deliveredTo.includes(currentUser.id)) {
@@ -734,17 +767,17 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
 
     for (const post of snapshot.posts) {
       const owner = snapshot.users.find((user) => user.id === post.userId);
-      const retentionDays = owner?.retentionDays ?? 15;
+      const retentionDays = owner?.retentionDays ?? DEFAULT_RETENTION_DAYS;
       if (!post.deletedAt && now - post.endTime > retentionDays * 86_400_000) expiredPostIds.add(post.id);
     }
     for (const message of snapshot.groupMessages) {
       const sender = snapshot.users.find((user) => user.id === message.senderId);
-      const retentionDays = sender?.retentionDays ?? 15;
+      const retentionDays = sender?.retentionDays ?? DEFAULT_RETENTION_DAYS;
       if (now - message.createdAt > retentionDays * 86_400_000) expiredMessageIds.add(message.id);
     }
     for (const notification of snapshot.notifications) {
       const recipient = snapshot.users.find((user) => user.id === notification.recipientId);
-      const retentionDays = recipient?.retentionDays ?? 15;
+      const retentionDays = recipient?.retentionDays ?? DEFAULT_RETENTION_DAYS;
       if (now - notification.createdAt > retentionDays * 86_400_000) expiredNotificationIds.add(notification.id);
     }
 
@@ -902,8 +935,12 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
 
   const register: AppContextValue["register"] = async (username, password, confirmPassword) => {
     const clean = username.trim().toLowerCase();
-    if (!/^[a-z0-9_]{3,24}$/.test(clean)) return { ok: false, error: "Use 3-24 lowercase letters, numbers, or underscores." };
+    if (username !== username.trim() || /\s/.test(username)) return { ok: false, error: "Username cannot contain spaces." };
+    if (clean.length < 3 || clean.length > 24) return { ok: false, error: "Username must be 3-24 characters." };
+    if (clean !== username) return { ok: false, error: "Username must use lowercase letters." };
+    if (!/^[a-z0-9_]+$/.test(clean)) return { ok: false, error: "Username can only use lowercase letters, numbers, and underscores." };
     if (password.length < 6) return { ok: false, error: "Password must be at least 6 characters." };
+    if (/\s/.test(password)) return { ok: false, error: "Password cannot contain spaces." };
     if (password !== confirmPassword) return { ok: false, error: "Passwords do not match." };
 
     // Don't check local state for username — Firebase Auth is the source of truth
@@ -955,7 +992,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
               email: usernameToEmail(clean),
               privacy: "public",
               customUsernames: [],
-              retentionDays: 15,
+              retentionDays: DEFAULT_RETENTION_DAYS,
               createdAt: Date.now(),
               updatedAt: Date.now(),
               passwordHash: hashPassword(password),
@@ -1188,7 +1225,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
 
   const addGroupMessage: AppContextValue["addGroupMessage"] = async (groupId, content, replyToMessageId) => {
     if (!currentUser) return { ok: false, error: "Sign in first." };
-    const group = state.groups.find((item) => item.id === groupId);
+    const group = resolveGroup(state.groups, state.users, groupId, state.groupMessages);
     if (!group || !group.memberIds.includes(currentUser.id)) return { ok: false, error: "Group not found." };
     const clean = content.trim();
     if (!clean) return { ok: false, error: "Type a message first." };
@@ -1219,10 +1256,10 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     setState((snapshot) => ({
       ...snapshot,
       groupMessages: [...snapshot.groupMessages, message],
-      groups: snapshot.groups.map((item) => item.id === groupId ? updatedGroup : item),
+      groups: groupId === PUBLIC_CHAT_ID ? snapshot.groups : snapshot.groups.map((item) => item.id === groupId ? updatedGroup : item),
     }));
     commitOperation(queueFor("groupMessages", "upsert", message.id, { ...message, content: undefined }));
-    commitOperation(queueFor("groups", "upsert", updatedGroup.id, updatedGroup));
+    if (groupId !== PUBLIC_CHAT_ID) commitOperation(queueFor("groups", "upsert", updatedGroup.id, updatedGroup));
 
     // Notify all group members except sender (skip muted users)
     const pushBody = clean.length > 120 ? `${clean.slice(0, 117)}...` : clean;
@@ -1230,7 +1267,8 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       group.memberIds.map(async (memberId) => {
         if (memberId === currentUser.id) return;
         const member = state.users.find((u) => u.id === memberId);
-        const isMuted = member?.mutedGroupIds?.includes(groupId) ?? false;
+        const mutedIds = member?.mutedGroupIds ?? [];
+        const isMuted = groupId === PUBLIC_CHAT_ID ? !mutedIds.includes(PUBLIC_CHAT_UNMUTED_ID) : mutedIds.includes(groupId);
         if (isMuted) return;
         await createNotification(
           memberId,
@@ -1251,7 +1289,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     if (!currentUser) return { ok: false, error: "Sign in first." };
     const message = state.groupMessages.find((item) => item.id === messageId);
     if (!message || message.senderId !== currentUser.id) return { ok: false, error: "You can edit only your messages." };
-    const group = state.groups.find((item) => item.id === message.groupId);
+    const group = resolveGroup(state.groups, state.users, message.groupId, state.groupMessages);
     if (!group?.memberIds.includes(currentUser.id)) return { ok: false, error: "Group not found." };
     const clean = content.trim();
     if (!clean) return { ok: false, error: "Type a message first." };
@@ -1282,7 +1320,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     if (!currentUser) return { ok: false, error: "Sign in first." };
     const message = state.groupMessages.find((item) => item.id === messageId);
     if (!message) return { ok: false, error: "Message not found." };
-    const group = state.groups.find((item) => item.id === message.groupId);
+    const group = resolveGroup(state.groups, state.users, message.groupId, state.groupMessages);
     if (!group?.memberIds.includes(currentUser.id)) return { ok: false, error: "Group not found." };
     const deleteForEveryone = scope === "everyone" && message.senderId === currentUser.id;
     const now = Date.now();
@@ -1311,7 +1349,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
 
   const clearGroupChat: AppContextValue["clearGroupChat"] = (groupId) => {
     if (!currentUser) return { ok: false, error: "Sign in first." };
-    const group = state.groups.find((item) => item.id === groupId);
+    const group = resolveGroup(state.groups, state.users, groupId, state.groupMessages);
     if (!group?.memberIds.includes(currentUser.id)) return { ok: false, error: "Group not found." };
     const messagesToDelete = state.groupMessages.filter((item) => item.groupId === groupId);
     if (messagesToDelete.length === 0) return { ok: false, error: "Chat is already empty." };
@@ -1330,7 +1368,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     if (!currentUser) return { ok: false, error: "Sign in first." };
     const message = state.groupMessages.find((item) => item.id === messageId);
     if (!message) return { ok: false, error: "Message not found." };
-    const group = state.groups.find((item) => item.id === message.groupId);
+    const group = resolveGroup(state.groups, state.users, message.groupId, state.groupMessages);
     if (!group?.memberIds.includes(currentUser.id)) return { ok: false, error: "Group not found." };
 
     const pinnedBy = message.pinnedBy ?? [];
@@ -1355,7 +1393,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     }
     const message = state.groupMessages.find((item) => item.id === messageId);
     if (!message) return { ok: false, error: "Message not found." };
-    const group = state.groups.find((item) => item.id === message.groupId);
+    const group = resolveGroup(state.groups, state.users, message.groupId, state.groupMessages);
     if (!group?.memberIds.includes(currentUser.id)) return { ok: false, error: "Group not found." };
     const reactions = { ...(message.reactions ?? {}) };
     const removing = reactions[currentUser.id] === cleanReaction;
@@ -1386,7 +1424,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     const snap = stateRef.current;
     const user = snap.users.find((u) => u.id === currentUserId);
     if (!user) return;
-    const group = snap.groups.find((item) => item.id === groupId);
+    const group = resolveGroup(snap.groups, snap.users, groupId, snap.groupMessages);
     if (!group?.memberIds.includes(user.id)) return;
 
     const now = Date.now();
@@ -1474,11 +1512,25 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     }
   }, [currentUserId, commitOperation]);
 
+  const deleteNotification: AppContextValue["deleteNotification"] = useCallback((notificationId) => {
+    const snap = stateRef.current;
+    const notification = snap.notifications.find((item) => item.id === notificationId && item.recipientId === currentUserId);
+    if (!notification) return;
+    setState((snapshot) => ({
+      ...snapshot,
+      notifications: snapshot.notifications.filter((item) => item.id !== notificationId),
+    }));
+    commitOperation(queueFor("notifications", "delete", notificationId));
+  }, [currentUserId, commitOperation]);
+
   const toggleMuteGroup: AppContextValue["toggleMuteGroup"] = (groupId) => {
     if (!currentUser) return;
     const mutedIds = currentUser.mutedGroupIds ?? [];
-    const isMuted = mutedIds.includes(groupId);
-    const nextMutedIds = isMuted ? mutedIds.filter((id) => id !== groupId) : [...mutedIds, groupId];
+    const isPublicChat = groupId === PUBLIC_CHAT_ID;
+    const isMuted = isPublicChat ? !mutedIds.includes(PUBLIC_CHAT_UNMUTED_ID) : mutedIds.includes(groupId);
+    const nextMutedIds = isPublicChat
+      ? (isMuted ? [...mutedIds, PUBLIC_CHAT_UNMUTED_ID] : mutedIds.filter((id) => id !== PUBLIC_CHAT_UNMUTED_ID))
+      : (isMuted ? mutedIds.filter((id) => id !== groupId) : [...mutedIds, groupId]);
     const updated = { ...currentUser, mutedGroupIds: nextMutedIds, updatedAt: Date.now() };
     setState((snapshot) => ({
       ...snapshot,
@@ -1488,6 +1540,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const isGroupMuted: AppContextValue["isGroupMuted"] = (groupId) => {
+    if (groupId === PUBLIC_CHAT_ID) return !(currentUser?.mutedGroupIds ?? []).includes(PUBLIC_CHAT_UNMUTED_ID);
     return currentUser?.mutedGroupIds?.includes(groupId) ?? false;
   };
 
@@ -1563,14 +1616,16 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     return { ok: true };
   };
 
-  const addPostComment: AppContextValue["addPostComment"] = (postId, content) => {
+  const addPostComment: AppContextValue["addPostComment"] = (postId, content, parentCommentId) => {
     if (!currentUser) return { ok: false, error: "Sign in first." };
     const post = state.posts.find((item) => item.id === postId);
     if (!post) return { ok: false, error: "Post not found." };
     const clean = content.trim();
     if (!clean) return { ok: false, error: "Type a comment first." };
+    const parent = parentCommentId ? (post.comments ?? []).find((item) => item.id === parentCommentId) : undefined;
+    if (parentCommentId && !parent) return { ok: false, error: "Comment not found." };
     const now = Date.now();
-    const comment: PostComment = { id: uid("pc"), userId: currentUser.id, content: clean, createdAt: now, updatedAt: now };
+    const comment: PostComment = { id: uid("pc"), userId: currentUser.id, content: clean, parentCommentId: parent?.parentCommentId ?? parent?.id, createdAt: now, updatedAt: now };
     const updated = { ...post, comments: [...(post.comments ?? []), comment], updatedAt: now, dirty: true };
     setState((snapshot) => ({
       ...snapshot,
@@ -1697,10 +1752,14 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
 
   const visibleGroups = useMemo(() => {
     if (!currentUser) return [];
-    return state.groups
+    const publicChat = makePublicChatGroup(
+      state.users,
+      Math.max(0, ...state.groupMessages.filter((item) => item.groupId === PUBLIC_CHAT_ID).map((item) => item.createdAt))
+    );
+    return [publicChat, ...state.groups]
       .filter((group) => group.memberIds.includes(currentUser.id))
       .sort((a, b) => b.updatedAt - a.updatedAt);
-  }, [currentUser, state.groups]);
+  }, [currentUser, state.groups, state.groupMessages, state.users]);
 
   const presenceUserId = currentUser?.id;
   const presenceUsername = currentUser?.username;
@@ -1769,21 +1828,21 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
           if (message.senderId === currentUser.id) return false;
           if (message.groupId === activeGroupChatId) return false;
           if ((message.deletedFor ?? []).includes(currentUser.id)) return false;
-          const group = state.groups.find((item) => item.id === message.groupId);
+          const group = resolveGroup(state.groups, state.users, message.groupId, state.groupMessages);
           if (!group?.memberIds.includes(currentUser.id)) return false;
           return !(message.readBy ?? [message.senderId]).includes(currentUser.id);
         })
         .map((message) => message.groupId)
     );
     return unreadGroupIds.size;
-  }, [currentUser, state.groupMessages, state.groups, activeGroupChatId]);
+  }, [currentUser, state.groupMessages, state.groups, state.users, activeGroupChatId]);
 
   const value: AppContextValue = {
     currentUser,
     users: state.users,
     posts: state.posts,
     connections: state.connections,
-    groups: state.groups,
+    groups: visibleGroups,
     groupMessages: groupMessagesForUi,
     notifications: myNotifications,
     settings: state.settings,
@@ -1814,6 +1873,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     markGroupMessagesRead,
     markGroupNotificationsRead,
     markNotificationsForLinkRead,
+    deleteNotification,
     setActiveGroupChat: setActiveGroupChatId,
     toggleMuteGroup,
     isGroupMuted,

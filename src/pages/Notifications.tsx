@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { Bell, BellOff, Clock3, Heart, MessageCircle, MessageSquare, SmilePlus, UserCheck, UserPlus } from "lucide-react";
 import { AppShell } from "@/components/layout/AppShell";
@@ -27,7 +27,9 @@ const toneMap: Record<AppNotification["type"], string> = {
 };
 
 const Notifications = () => {
-  const { notifications, settings, markNotificationsRead } = useApp();
+  const { notifications, settings, markNotificationsRead, deleteNotification } = useApp();
+  const [swipingId, setSwipingId] = useState<string | null>(null);
+  const swipeRef = useRef<{ id: string; x: number; y: number } | null>(null);
   const visibleNotifications = notifications.filter(
     (item) => item.type !== "group_message" && item.type !== "group_reaction"
   );
@@ -55,7 +57,27 @@ const Notifications = () => {
               const Icon = iconMap[notif.type] ?? Bell;
               const tone = toneMap[notif.type] ?? "bg-muted text-muted-foreground";
               const inner = (
-                <div className="tap-lift flex items-start gap-3 rounded-lg border border-border bg-card p-3 shadow-soft transition-smooth hover:border-primary/30">
+                <div
+                  className={`tap-lift flex items-start gap-3 rounded-lg border border-border bg-card p-3 shadow-soft transition-smooth hover:border-primary/30 ${swipingId === notif.id ? "translate-x-3 opacity-80" : ""}`}
+                  style={{ touchAction: "pan-y" }}
+                  onPointerDown={(event) => {
+                    swipeRef.current = { id: notif.id, x: event.clientX, y: event.clientY };
+                    setSwipingId(notif.id);
+                  }}
+                  onPointerUp={(event) => {
+                    const start = swipeRef.current;
+                    swipeRef.current = null;
+                    setSwipingId(null);
+                    if (!start || start.id !== notif.id) return;
+                    const dx = event.clientX - start.x;
+                    const dy = Math.abs(event.clientY - start.y);
+                    if (Math.abs(dx) > 70 && dy < 45) deleteNotification(notif.id);
+                  }}
+                  onPointerCancel={() => {
+                    swipeRef.current = null;
+                    setSwipingId(null);
+                  }}
+                >
                   <div className={`flex size-10 shrink-0 items-center justify-center rounded-lg ${tone}`}>
                     <Icon className="size-5" />
                   </div>
