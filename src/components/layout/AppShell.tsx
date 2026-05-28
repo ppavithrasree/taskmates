@@ -1,5 +1,5 @@
 import { ReactNode } from "react";
-import { NavLink, Navigate, useNavigate } from "react-router-dom";
+import { NavLink, Navigate, useLocation, useNavigate } from "react-router-dom";
 import { Bell, ClipboardList, LayoutDashboard, LogOut, Search, Settings, User, UsersRound, Download } from "lucide-react";
 import { TaskMateAIProvider } from "@/features/ai/TaskMateAIProvider";
 import { useApp } from "@/context/AppContext";
@@ -36,6 +36,7 @@ export const AppShell = ({
 }) => {
   const { currentUser, logout, unreadNotificationCount, pendingRequestCount, unreadGroupCount } = useApp();
   const navigate = useNavigate();
+  const location = useLocation();
   const { forceRequired, updateAvailable, updateInfo, downloadUpdate } = useOtaUpdate();
 
   if (!currentUser) return <Navigate to="/login" replace />;
@@ -88,7 +89,7 @@ export const AppShell = ({
       </header>
 
       {/* ── Main Content ── */}
-      <main className={cn("animate-fade-in-up pb-24", mainClassName)}>{children}</main>
+      <main key={location.pathname} className={cn("page-transition pb-24", mainClassName)}>{children}</main>
       <TaskMateAIProvider />
       <Dialog open={forceRequired} onOpenChange={() => undefined}>
         <DialogContent

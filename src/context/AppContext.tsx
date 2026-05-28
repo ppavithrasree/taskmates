@@ -21,6 +21,7 @@ import { connectPresence, emitTyping as emitSocketTyping, updatePresenceGroups, 
 
 const LS_KEY = "taskmates_activity_state_v1";
 const SESSION_KEY = "taskmates_activity_session_v1";
+const SESSION_USER_KEY = "taskmates_activity_session_user_v1";
 const TOKEN_KEY = "taskmates_firebase_token_v1";
 const LAST_SEEN_KEY = "taskmates_last_seen_cache_v1";
 const DEFAULT_THEME: "light" | "dark" = "dark";
@@ -109,6 +110,15 @@ const saveLastSeenCache = (cache: Record<string, number>) => {
   localStorage.setItem(LAST_SEEN_KEY, JSON.stringify(cache));
 };
 
+const loadSessionUser = (): User | null => {
+  try {
+    const raw = localStorage.getItem(SESSION_USER_KEY);
+    return raw ? JSON.parse(raw) as User : null;
+  } catch {
+    return null;
+  }
+};
+
 const emptyState = (): AppState => ({
   users: [],
   posts: [],
@@ -163,9 +173,17 @@ const load = (): AppState => {
       timeFormat: parsed.settings?.timeFormat ?? "24",
     };
     if (isDemoOnly) return { ...emptyState(), settings: nextSettings };
+    const sessionId = localStorage.getItem(SESSION_KEY);
+    const sessionUser = loadSessionUser();
+    const users = parsed.users ?? [];
+    const usersWithSession =
+      sessionId && sessionUser?.id === sessionId && !users.some((user) => user.id === sessionId)
+        ? [...users, sessionUser]
+        : users;
     // Remove soft-deleted posts from local state on load
     return {
       ...parsed,
+      users: usersWithSession,
       posts: (parsed.posts ?? []).filter((p) => !p.deletedAt),
       connections: (parsed.connections ?? []).filter((c) => c.status !== "rejected"),
       groups: parsed.groups ?? [],
@@ -373,6 +391,8 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   stateRef.current = state;
   appActiveRef.current = appActive;
 
+  const currentUser = useMemo(() => state.users.find((user) => user.id === currentUserId) ?? null, [state.users, currentUserId]);
+
   // Debounced localStorage save — avoids blocking the main thread on every state update
   useEffect(() => {
     if (lsSaveTimerRef.current) window.clearTimeout(lsSaveTimerRef.current);
@@ -398,6 +418,18 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     else localStorage.removeItem(SESSION_KEY);
   }, [currentUserId]);
   useEffect(() => {
+    if (currentUser) localStorage.setItem(SESSION_USER_KEY, JSON.stringify(currentUser));
+  }, [currentUser]);
+  useEffect(() => {
+    if (!currentUserId) return;
+    if (state.users.some((user) => user.id === currentUserId)) return;
+    const sessionUser = loadSessionUser();
+    if (!sessionUser || sessionUser.id !== currentUserId) return;
+    setState((snapshot) => snapshot.users.some((user) => user.id === sessionUser.id)
+      ? snapshot
+      : { ...snapshot, users: [...snapshot.users, sessionUser] });
+  }, [currentUserId, state.users]);
+  useEffect(() => {
     const cache = loadLastSeenCache();
     let changed = false;
     for (const user of state.users) {
@@ -411,8 +443,6 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   useEffect(() => {
     document.documentElement.classList.toggle("dark", state.settings.theme === "dark");
   }, [state.settings.theme]);
-
-  const currentUser = useMemo(() => state.users.find((user) => user.id === currentUserId) ?? null, [state.users, currentUserId]);
 
   const commitOperation = useCallback(
     (operation: ReturnType<typeof queueFor>) => {
@@ -589,7 +619,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
 
   // Subscribe to Firebase realtime updates
   useEffect(() => {
-    if (!hasFirebaseConfig || !currentUserId || !appActive) {
+    if (!hasFirebaseConfig || !currentUserId || !appActive || !online) {
       setGroupsLoading(false);
       return;
     }
@@ -682,7 +712,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       window.clearTimeout(safetyTimer);
       unsubscribe();
     };
-  }, [currentUserId, appActive]);
+  }, [currentUserId, appActive, online]);
 
   // Decrypt encrypted group messages once per version and cache plaintext in local state.
   useEffect(() => {
@@ -1101,6 +1131,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       commitOperation(queueFor("users", "upsert", updated.id, updated));
     }
     localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(SESSION_USER_KEY);
     await firebaseSignOut().catch(() => undefined);
     groupsLoadedOnceRef.current = false;
     setCurrentUserId(null);
