@@ -609,7 +609,20 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         window.clearTimeout(safetyTimer);
       }
       setState((snapshot) => {
-        let nextPosts = remote.posts ? mergePosts(snapshot.posts, remote.posts) : snapshot.posts;
+        const pendingDeleteIdsFor = (collection: SyncCollection) =>
+          new Set(snapshot.syncQueue.filter((op) => op.collection === collection && op.type === "delete").map((op) => op.entityId));
+        const pendingPostDeletes = pendingDeleteIdsFor("posts");
+        const pendingConnectionDeletes = pendingDeleteIdsFor("connections");
+        const pendingGroupDeletes = pendingDeleteIdsFor("groups");
+        const pendingMessageDeletes = pendingDeleteIdsFor("groupMessages");
+        const pendingNotificationDeletes = pendingDeleteIdsFor("notifications");
+
+        let nextPosts = remote.posts
+          ? mergePosts(
+            snapshot.posts.filter((post) => !pendingPostDeletes.has(post.id)),
+            remote.posts.filter((post) => !pendingPostDeletes.has(post.id))
+          )
+          : snapshot.posts.filter((post) => !pendingPostDeletes.has(post.id));
         nextPosts = nextPosts.filter((p) => !p.deletedAt);
 
         // For connections, use Firebase as source of truth:
@@ -617,11 +630,12 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         // This ensures deleted connections disappear for both users.
         let nextConnections: Connection[];
         if (remote.connections) {
-          const remoteMap = new Map(remote.connections.map((c) => [c.id, c]));
+          const remoteConnections = remote.connections.filter((connection) => !pendingConnectionDeletes.has(connection.id));
+          const remoteMap = new Map(remoteConnections.map((c) => [c.id, c]));
           const dirtyLocal = snapshot.connections.filter((c) => (c as Connection & { dirty?: boolean }).dirty && !remoteMap.has(c.id));
-          nextConnections = [...remote.connections, ...dirtyLocal];
+          nextConnections = [...remoteConnections, ...dirtyLocal].filter((connection) => !pendingConnectionDeletes.has(connection.id));
         } else {
-          nextConnections = snapshot.connections;
+          nextConnections = snapshot.connections.filter((connection) => !pendingConnectionDeletes.has(connection.id));
         }
         nextConnections = nextConnections.filter((c) => c.status !== "rejected");
 
@@ -629,17 +643,23 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         const currentRemoteUser = remote.users?.find((user) => user.id === currentUserId) ?? snapshot.users.find((user) => user.id === currentUserId);
         const notificationCutoff = Date.now() - (currentRemoteUser?.retentionDays ?? DEFAULT_RETENTION_DAYS) * 86_400_000;
         let nextNotifications = remote.notifications
-          ? remoteWithPendingLocal(snapshot.notifications, remote.notifications)
-          : snapshot.notifications;
+          ? remoteWithPendingLocal(
+            snapshot.notifications.filter((notification) => !pendingNotificationDeletes.has(notification.id)),
+            remote.notifications.filter((notification) => !pendingNotificationDeletes.has(notification.id))
+          )
+          : snapshot.notifications.filter((notification) => !pendingNotificationDeletes.has(notification.id));
         nextNotifications = nextNotifications.filter(
           (n) => n.recipientId === currentUserId && n.createdAt > notificationCutoff
         );
 
         let nextGroupMessages: GroupMessage[];
         if (remote.groupMessages) {
-          nextGroupMessages = mergeGroupMessages(snapshot.groupMessages, remote.groupMessages);
+          nextGroupMessages = mergeGroupMessages(
+            snapshot.groupMessages.filter((message) => !pendingMessageDeletes.has(message.id)),
+            remote.groupMessages.filter((message) => !pendingMessageDeletes.has(message.id))
+          );
         } else {
-          nextGroupMessages = snapshot.groupMessages;
+          nextGroupMessages = snapshot.groupMessages.filter((message) => !pendingMessageDeletes.has(message.id));
         }
 
         return {
@@ -647,7 +667,12 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
           users: remote.users ? remoteWithPendingLocal(snapshot.users, remote.users) : snapshot.users,
           posts: nextPosts,
           connections: nextConnections,
-          groups: remote.groups ? remoteWithPendingLocal(snapshot.groups, remote.groups) : snapshot.groups,
+          groups: remote.groups
+            ? remoteWithPendingLocal(
+              snapshot.groups.filter((group) => !pendingGroupDeletes.has(group.id)),
+              remote.groups.filter((group) => !pendingGroupDeletes.has(group.id))
+            )
+            : snapshot.groups.filter((group) => !pendingGroupDeletes.has(group.id)),
           groupMessages: nextGroupMessages,
           notifications: nextNotifications,
         };

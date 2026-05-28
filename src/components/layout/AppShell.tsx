@@ -4,6 +4,7 @@ import { Bell, ClipboardList, LayoutDashboard, LogOut, Search, Settings, User, U
 import { TaskMateAIProvider } from "@/features/ai/TaskMateAIProvider";
 import { useApp } from "@/context/AppContext";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { useOtaUpdate } from "@/hooks/useOtaUpdate";
 
@@ -35,7 +36,7 @@ export const AppShell = ({
 }) => {
   const { currentUser, logout, unreadNotificationCount, pendingRequestCount, unreadGroupCount } = useApp();
   const navigate = useNavigate();
-  const { updateAvailable, downloadUpdate } = useOtaUpdate();
+  const { forceRequired, updateAvailable, updateInfo, downloadUpdate } = useOtaUpdate();
 
   if (!currentUser) return <Navigate to="/login" replace />;
 
@@ -89,6 +90,34 @@ export const AppShell = ({
       {/* ── Main Content ── */}
       <main className={cn("animate-fade-in-up pb-24", mainClassName)}>{children}</main>
       <TaskMateAIProvider />
+      <Dialog open={forceRequired} onOpenChange={() => undefined}>
+        <DialogContent
+          className="max-w-md rounded-2xl border border-border/80 bg-card/95 p-6 shadow-soft-lg backdrop-blur-md"
+          onEscapeKeyDown={(event) => event.preventDefault()}
+          onPointerDownOutside={(event) => event.preventDefault()}
+        >
+          <DialogHeader className="text-center">
+            <div className="mx-auto mb-4 flex size-12 items-center justify-center rounded-full bg-destructive/10 text-destructive animate-pulse">
+              <Download className="size-6" />
+            </div>
+            <DialogTitle className="text-xl font-black tracking-tight text-foreground">Update Required</DialogTitle>
+            <DialogDescription className="mt-2 text-sm leading-relaxed text-muted-foreground">
+              Version {updateInfo?.version} is required to continue using TaskMates.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="mt-4 space-y-3">
+            {updateInfo?.releaseNotes && (
+              <div className="max-h-36 overflow-y-auto rounded-xl border border-border bg-muted/50 p-4 text-xs font-semibold leading-relaxed text-muted-foreground">
+                <p className="mb-1 font-bold text-foreground">Release notes</p>
+                {updateInfo.releaseNotes}
+              </div>
+            )}
+            <Button onClick={downloadUpdate} className="h-11 w-full bg-gradient-primary font-bold shadow-glow">
+              Update Now
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* ── Bottom Navigation with Glassmorphism ── */}
       <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-border/40 bg-card/80 backdrop-blur-xl px-2 pb-[calc(env(safe-area-inset-bottom)+0.4rem)] pt-2">
