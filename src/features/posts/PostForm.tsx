@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import { CalendarDays, ChevronDown, Clock3 } from "lucide-react";
 import type { Post, Visibility } from "@/types";
 import { useApp } from "@/context/AppContext";
+import { startOfLocalDay } from "@/lib/timeCoverage";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -57,11 +58,28 @@ const fromParts = (parts: DateParts, format: "12" | "24" = "24") => {
   ).getTime();
 };
 
+const MIN_DEFAULT_DURATION_MS = 5 * 60_000;
+const NEXT_MINUTE_MS = 60_000;
+
+const defaultActivityRange = (posts: Post[], userId?: string) => {
+  const now = Date.now();
+  const dayStart = startOfLocalDay(now);
+  const dayEnd = dayStart + 86_400_000;
+  const latestToday = posts
+    .filter((post) => post.userId === userId && !post.deletedAt && post.startTime < dayEnd && post.endTime > dayStart)
+    .sort((left, right) => right.endTime - left.endTime)[0];
+  const startTime = latestToday ? Math.min(latestToday.endTime + NEXT_MINUTE_MS, now) : dayStart;
+  const endTime = Math.min(Math.max(now, startTime + MIN_DEFAULT_DURATION_MS), now + MIN_DEFAULT_DURATION_MS);
+
+  return { startTime, endTime };
+};
+
 export const PostForm = ({ initial, prefilledStart, prefilledEnd, onClose, onSaved }: Props) => {
-  const { currentUser, users, settings, addPost, updatePost, getAcceptedConnectionIds } = useApp();
+  const { currentUser, users, posts, settings, addPost, updatePost, getAcceptedConnectionIds } = useApp();
   const timeFormat = settings.timeFormat ?? "24";
-  const [startParts, setStartParts] = useState(() => toParts(initial?.startTime ?? prefilledStart ?? Date.now() - 30 * 60_000, timeFormat));
-  const [endParts, setEndParts] = useState(() => toParts(initial?.endTime ?? prefilledEnd ?? Date.now(), timeFormat));
+  const defaultRange = useMemo(() => defaultActivityRange(posts, currentUser?.id), [posts, currentUser?.id]);
+  const [startParts, setStartParts] = useState(() => toParts(initial?.startTime ?? prefilledStart ?? defaultRange.startTime, timeFormat));
+  const [endParts, setEndParts] = useState(() => toParts(initial?.endTime ?? prefilledEnd ?? defaultRange.endTime, timeFormat));
   const [content, setContent] = useState(initial?.content ?? "");
   const [visibility, setVisibility] = useState<Visibility>(initial?.visibility ?? currentUser?.privacy ?? "public");
   const [customUsernames, setCustomUsernames] = useState<string[]>(initial?.customUsernames ?? currentUser?.customUsernames ?? []);

@@ -4,6 +4,7 @@ import { ArrowLeft, Bell, BellOff, Check, Edit3, Info, Loader2, LogOut, MoreVert
 import { toast } from "sonner";
 import { AppShell } from "@/components/layout/AppShell";
 import { useApp } from "@/context/AppContext";
+import { LinkifiedText } from "@/components/LinkifiedText";
 import { AI_NAME } from "@/features/ai/constants";
 import { useAiSettings } from "@/features/ai/useAiSettings";
 import { formatClockTime, formatDayAwareDateTime } from "@/lib/dateTime";
@@ -589,7 +590,11 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
                           <span className="block truncate opacity-80">{messageText(repliedTo)}</span>
                         </button>
                       )}
-                      <LinkifiedText text={messageText(item)} pending={!item.content && item.encrypted} />
+                      <LinkifiedText
+                        text={messageText(item)}
+                        pending={!item.content && item.encrypted}
+                        className="chat-bubble-text block text-sm"
+                      />
                       <ReactionSummary reactions={item.reactions} />
                       <div className={`mt-1 flex items-center justify-end gap-1.5 text-[10px] ${mine ? "text-white/80 dark:text-emerald-950/75" : "text-muted-foreground"}`}>
                         {pinned && <Pin className="size-3" />}
@@ -729,10 +734,17 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
                 {messageSearchResults.map((item) => {
                   const sender = userById.get(item.senderId);
                   return (
-                    <button
+                    <div
                       key={item.id}
-                      type="button"
+                      role="button"
+                      tabIndex={0}
                       onClick={() => {
+                        setSearchOpen(false);
+                        showMessage(item.id);
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key !== "Enter" && event.key !== " ") return;
+                        event.preventDefault();
                         setSearchOpen(false);
                         showMessage(item.id);
                       }}
@@ -742,8 +754,8 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
                         <span className="truncate text-xs font-black text-primary">{sender?.username ?? "Unknown"}</span>
                         <span className="shrink-0 text-[10px] font-bold text-muted-foreground">{formatDayAwareDateTime(item.createdAt, settings.timeFormat)}</span>
                       </div>
-                      <p className="line-clamp-2 whitespace-pre-wrap break-words text-sm">{messageText(item)}</p>
-                    </button>
+                      <LinkifiedText text={messageText(item)} className="line-clamp-2 block text-sm" />
+                    </div>
                   );
                 })}
               </div>
@@ -1033,7 +1045,7 @@ const MessageInfoDialog = ({
         {message && (
           <div className="space-y-4">
             <div className="rounded-lg bg-primary-soft p-3 text-sm">
-              <p className="whitespace-pre-wrap break-all font-medium leading-relaxed">{messageText(message)}</p>
+              <LinkifiedText text={messageText(message)} className="block break-all font-medium leading-relaxed" />
               <p className="mt-1 text-[10px] font-bold text-muted-foreground">{formatClockTime(message.createdAt, timeFormat)}</p>
             </div>
             <section className="space-y-2">
@@ -1098,7 +1110,7 @@ const MessageActionsDialog = ({
       {message && (
         <div className="space-y-3">
           <div className="w-full min-w-0 rounded-lg bg-primary-soft p-3 text-sm">
-            <p className="min-w-0 whitespace-pre-wrap break-all font-medium leading-relaxed">{messageText(message)}</p>
+            <LinkifiedText text={messageText(message)} className="block min-w-0 break-all font-medium leading-relaxed" />
           </div>
           <div className="flex items-center gap-2 rounded-full border border-border bg-card p-2 shadow-soft">
             {DEFAULT_REACTIONS.map((reaction) => (
@@ -1206,26 +1218,6 @@ const EncryptionNotice = () => (
     Messages are end-to-end encrypted. Only people in this group can read them.
   </div>
 );
-
-const urlPattern = /(https?:\/\/[^\s<]+|www\.[^\s<]+)/gi;
-
-const LinkifiedText = ({ text, pending = false }: { text?: string; pending?: boolean }) => {
-  const safeText = text ?? "";
-  const parts = safeText.split(urlPattern);
-  return (
-    <p className={`chat-bubble-text whitespace-pre-wrap text-sm ${pending ? "italic opacity-70" : ""}`}>
-      {parts.map((part, index) => {
-        if (!part.match(urlPattern)) return <span key={`${part}-${index}`}>{part}</span>;
-        const href = part.startsWith("http") ? part : `https://${part}`;
-        return (
-          <a key={`${part}-${index}`} href={href} target="_blank" rel="noreferrer" className="font-bold underline underline-offset-2" onClick={(event) => event.stopPropagation()}>
-            {part}
-          </a>
-        );
-      })}
-    </p>
-  );
-};
 
 const groupDraftKey = (userId: string, groupId: string) => `taskmates_group_draft_${userId}_${groupId}`;
 

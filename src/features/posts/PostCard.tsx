@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import type { Post, PostComment, Visibility } from "@/types";
 import { useApp } from "@/context/AppContext";
 import { formatTimeRange } from "@/lib/dateTime";
+import { LinkifiedText } from "@/components/LinkifiedText";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
@@ -176,7 +177,7 @@ export const PostCard = ({ post }: { post: Post }) => {
                   <span className="block truncate">{parentComment.content}</span>
                 </button>
               )}
-              <p className="whitespace-pre-wrap break-words">{item.content}</p>
+              <LinkifiedText text={item.content} className="block" />
             </>
           )}
         </div>
@@ -213,7 +214,7 @@ export const PostCard = ({ post }: { post: Post }) => {
         <Clock3 className="size-4 text-primary" />
         {formatTimeRange(post.startTime, post.endTime, settings.timeFormat)}
       </div>
-      <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-foreground">{post.content}</p>
+      <LinkifiedText text={post.content} className="block text-sm leading-relaxed text-foreground" />
  
       <section className="mt-4 space-y-3 border-t border-border pt-3">
         <div className="flex flex-wrap items-center gap-2">

@@ -7,6 +7,7 @@ import { PostForm } from "@/features/posts/PostForm";
 import { useApp } from "@/context/AppContext";
 import { activityStats, startOfLocalDay } from "@/lib/timeCoverage";
 import { formatDayAwareDateTime, formatTimeRange } from "@/lib/dateTime";
+import { LinkifiedText } from "@/components/LinkifiedText";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -311,7 +312,7 @@ const LatestUserPost = ({ post, author, presence, timeFormat, onOpen }: { post: 
         <Clock3 className="size-4" />
         {formatTimeRange(post.startTime, post.endTime, timeFormat)}
       </div>
-      <p className="line-clamp-2 whitespace-pre-wrap text-sm leading-relaxed text-foreground/80">{post.content}</p>
+      <LinkifiedText text={post.content} className="line-clamp-2 block text-sm leading-relaxed text-foreground/80" />
       <p className="text-xs font-bold text-primary">View all posts →</p>
     </div>
   </button>
