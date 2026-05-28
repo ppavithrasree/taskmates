@@ -1301,14 +1301,32 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     let messageSynced = false;
     if (online) {
       const completed: string[] = [];
+      const groupNeedsSync = group.dirty || !state.groups.some((item) => item.id === group.id && !item.dirty);
+      if (groupNeedsSync) {
+        try {
+          if (await pushSyncOperation(groupOperation)) completed.push(groupOperation.id);
+        } catch (err) {
+          console.error("Failed to sync group before message:", err);
+        }
+      }
       try {
-        if (await pushSyncOperation(groupOperation)) completed.push(groupOperation.id);
-        if (await pushSyncOperation(messageOperation)) {
-          completed.push(messageOperation.id);
-          messageSynced = true;
+        if (!groupNeedsSync || completed.includes(groupOperation.id)) {
+          if (await pushSyncOperation(messageOperation)) {
+            completed.push(messageOperation.id);
+            messageSynced = true;
+          }
         }
       } catch (err) {
         console.error("Failed to sync group message before push:", err);
+        try {
+          const currentGroup = stateRef.current.groups.find((item) => item.id === group.id);
+          if (currentGroup && !currentGroup.dirty && await pushSyncOperation(messageOperation)) {
+            completed.push(messageOperation.id);
+            messageSynced = true;
+          }
+        } catch (retryErr) {
+          console.error("Failed to retry group message sync:", retryErr);
+        }
       }
       if (completed.length) {
         setState((snapshot) => {

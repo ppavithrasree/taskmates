@@ -631,7 +631,6 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
                               message={item}
                               groupMemberIds={group.memberIds}
                               currentUserId={currentUser.id}
-                              presenceByUserId={presenceByUserId}
                             />
                           </button>
                         )}
@@ -977,23 +976,20 @@ const MessageTicks = ({
   message,
   groupMemberIds,
   currentUserId,
-  presenceByUserId,
 }: {
   message: GroupMessage;
   groupMemberIds: string[];
   currentUserId: string;
-  presenceByUserId: Record<string, { active?: boolean }>;
 }) => {
   const rawRecipientIds = message.recipientIds ?? groupMemberIds;
   const recipientIds = rawRecipientIds.filter((id) => id !== message.senderId);
   const deliveredTo = message.deliveredTo ?? [message.senderId];
   const readBy = message.readBy ?? [message.senderId];
   const deliveredToAll = recipientIds.length > 0 && recipientIds.every((id) => deliveredTo.includes(id));
-  const recipientsOnline = recipientIds.length > 0 && recipientIds.every((id) => id === currentUserId || presenceByUserId[id]?.active);
   const seenByAll = recipientIds.length > 0 && recipientIds.every((id) => readBy.includes(id));
 
   if (seenByAll) return <DoubleTick className="size-3.5 text-[#60a5fa] dark:text-[#2563eb] animate-tick-bounce" strokeWidth={3} />;
-  if (deliveredToAll && recipientsOnline) return <DoubleTick className="size-3.5 text-white/90 dark:text-emerald-950/90 animate-tick-bounce" />;
+  if (deliveredToAll) return <DoubleTick className="size-3.5 text-white/90 dark:text-emerald-950/90 animate-tick-bounce" />;
   return <Check className="size-3.5 text-white/75 dark:text-emerald-950/75" />;
 };
 
