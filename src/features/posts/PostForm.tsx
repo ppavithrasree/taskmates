@@ -3,7 +3,7 @@ import { toast } from "sonner";
 import { CalendarDays, ChevronDown, Clock3 } from "lucide-react";
 import type { Post, Visibility } from "@/types";
 import { useApp } from "@/context/AppContext";
-import { startOfLocalDay } from "@/lib/timeCoverage";
+import { analyzeDayCoverage, DAY_MINUTES, startOfLocalDay } from "@/lib/timeCoverage";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -58,18 +58,26 @@ const fromParts = (parts: DateParts, format: "12" | "24" = "24") => {
   ).getTime();
 };
 
-const MIN_DEFAULT_DURATION_MS = 5 * 60_000;
-const NEXT_MINUTE_MS = 60_000;
+const DEFAULT_OPEN_GAP_DURATION_MINUTES = 120;
 
 const defaultActivityRange = (posts: Post[], userId?: string) => {
   const now = Date.now();
   const dayStart = startOfLocalDay(now);
   const dayEnd = dayStart + 86_400_000;
-  const latestToday = posts
-    .filter((post) => post.userId === userId && !post.deletedAt && post.startTime < dayEnd && post.endTime > dayStart)
-    .sort((left, right) => right.endTime - left.endTime)[0];
-  const startTime = latestToday ? Math.min(latestToday.endTime + NEXT_MINUTE_MS, now) : dayStart;
-  const endTime = Math.min(Math.max(now, startTime + MIN_DEFAULT_DURATION_MS), now + MIN_DEFAULT_DURATION_MS);
+  const todayPosts = posts.filter((post) => post.userId === userId && !post.deletedAt && post.startTime < dayEnd && post.endTime > dayStart);
+  const currentMinute = Math.max(0, Math.min(DAY_MINUTES, Math.floor((now - dayStart) / 60_000)));
+  const coverage = analyzeDayCoverage(todayPosts, dayStart);
+  const firstGap = coverage.gaps.find((gap) => gap.start < currentMinute || (gap.start === 0 && currentMinute === 0));
+  if (!firstGap) return { startTime: now, endTime: now + 5 * 60_000 };
+
+  const startMinute = firstGap.start;
+  const hasNextLog = firstGap.end < DAY_MINUTES && firstGap.end <= currentMinute;
+  const endMinute = hasNextLog
+    ? firstGap.end
+    : Math.min(firstGap.end, currentMinute, startMinute + DEFAULT_OPEN_GAP_DURATION_MINUTES);
+  const fallbackEndMinute = Math.min(DAY_MINUTES, Math.max(startMinute + 5, currentMinute));
+  const startTime = dayStart + startMinute * 60_000;
+  const endTime = dayStart + Math.max(endMinute, fallbackEndMinute) * 60_000;
 
   return { startTime, endTime };
 };
