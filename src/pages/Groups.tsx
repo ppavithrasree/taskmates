@@ -1,9 +1,9 @@
 import { FormEvent, ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
+import { Link, Navigate, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { ArrowLeft, Bell, BellOff, Check, Edit3, Info, Loader2, LogOut, MoreVertical, Pencil, Pin, PinOff, Plus, Reply, Search, Send, Trash2, UserPlus, UsersRound, X } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/components/layout/AppShell";
-import { PUBLIC_CHAT_ID, useApp } from "@/context/AppContext";
+import { useApp } from "@/context/AppContext";
 import { AI_NAME } from "@/features/ai/constants";
 import { useAiSettings } from "@/features/ai/useAiSettings";
 import { formatClockTime, formatDayAwareDateTime } from "@/lib/dateTime";
@@ -187,6 +187,8 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
   const [editingContent, setEditingContent] = useState("");
   const [clearChatOpen, setClearChatOpen] = useState(false);
   const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null);
+  const [searchParams] = useSearchParams();
+  const msgId = searchParams.get("msg");
   const [dayLabelNow, setDayLabelNow] = useState(() => new Date());
   const [searchOpen, setSearchOpen] = useState(false);
   const [messageSearch, setMessageSearch] = useState("");
@@ -200,16 +202,14 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
   const { enabled: aiEnabled } = useAiSettings(currentUser?.id);
 
   const group = groups.find((item) => item.id === groupId);
-  const isPublicChat = groupId === PUBLIC_CHAT_ID;
   const isMember = Boolean(currentUser && group?.memberIds.includes(currentUser.id));
   const currentUserDraftId = currentUser?.id;
   const groupDraftId = group?.id;
   const userById = useMemo(() => new Map(users.map((user) => [user.id, user])), [users]);
   const members = useMemo(() => {
     if (!group) return [];
-    const groupUsers = group.memberIds.map((id) => userById.get(id)).filter(Boolean) as User[];
-    return isPublicChat ? uniqueUsersByUsername(groupUsers, currentUser?.id) : groupUsers;
-  }, [group, userById, isPublicChat, currentUser?.id]);
+    return group.memberIds.map((id) => userById.get(id)).filter(Boolean) as User[];
+  }, [group, userById]);
 
   const messages = useMemo(
     () => groupMessages.filter((item) => item.groupId === groupId).sort((a, b) => a.createdAt - b.createdAt),
@@ -332,6 +332,13 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
   }, [groupId, emitTyping]);
 
   useLayoutEffect(() => {
+    if (msgId) {
+      const scrollTimer = window.setTimeout(() => {
+        showMessage(msgId);
+      }, 100);
+      return () => window.clearTimeout(scrollTimer);
+    }
+
     const scrollToBottom = () => {
       const list = messagesRef.current;
       if (!list) return;
@@ -345,7 +352,7 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
       window.cancelAnimationFrame(frame);
       window.clearTimeout(timer);
     };
-  }, [messages.length, groupId]);
+  }, [messages.length, groupId, msgId]);
 
   if (!currentUser) return null;
   if (!group || !isMember) return <Navigate to="/groups" replace />;
@@ -467,7 +474,7 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
           <Button asChild size="icon" variant="ghost" aria-label="Group info" className="size-8 shrink-0 rounded-md">
             <Link to={`/groups/${group.id}/info`}><Info className="size-4" /></Link>
           </Button>
-          <Button size="icon" variant="ghost" aria-label="Clear chat" onClick={() => setClearChatOpen(true)} className="size-8 shrink-0 rounded-md">
+          <Button size="icon" variant="ghost" aria-label="Clear chat" onClick={() => setClearChatOpen(true)} className="size-8 shrink-0 rounded-md text-red-500">
             <Trash2 className="size-4" />
           </Button>
         </header>
@@ -483,7 +490,7 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
                   onClick={() => showMessage(item.id)}
                   className="flex max-w-[18rem] shrink-0 items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-left shadow-soft"
                 >
-                  <Pin className="size-3.5 shrink-0 text-primary" />
+                  <Pin className="size-3.5 shrink-0 text-amber-500 fill-amber-500" />
                   <span className="min-w-0">
                     <span className="block truncate text-xs font-black">{sender?.username ?? "Unknown"}</span>
                     <span className="block truncate text-xs text-muted-foreground">{messageText(item)}</span>
@@ -497,14 +504,14 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
         <section ref={messagesRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto pb-2">
           {messages.length === 0 ? (
             <div className="space-y-3">
-              <EncryptionNotice publicChat={isPublicChat} />
+              <EncryptionNotice />
               <div className="rounded-lg border border-dashed border-border bg-card p-8 text-center text-sm text-muted-foreground">
                 No messages yet.
               </div>
             </div>
           ) : (
             <>
-              <EncryptionNotice publicChat={isPublicChat} />
+              <EncryptionNotice />
               {messages.map((item, index) => {
               const mine = item.senderId === currentUser.id;
               const sender = userById.get(item.senderId);
@@ -594,10 +601,10 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
                             event.stopPropagation();
                             focusReply(item);
                           }}
-                          className="flex items-center rounded px-0.5"
+                          className={`flex size-7 shrink-0 items-center justify-center ${mine ? "text-white dark:text-emerald-950" : "text-primary"}`}
                           aria-label="Reply to message"
                         >
-                          <Reply className="size-3.5" />
+                          <Reply className="size-4" />
                         </button>
                         <button
                           type="button"
@@ -605,10 +612,10 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
                             event.stopPropagation();
                             togglePin(item);
                           }}
-                          className="flex items-center rounded px-0.5"
+                          className="flex size-7 shrink-0 items-center justify-center rounded-full text-amber-500"
                           aria-label={pinned ? "Unpin message" : "Pin message"}
                         >
-                          {pinned ? <PinOff className="size-3.5" /> : <Pin className="size-3.5" />}
+                          {pinned ? <PinOff className="size-4" /> : <Pin className="size-4" />}
                         </button>
                         {mine && (
                           <button
@@ -620,7 +627,12 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
                             className="flex items-center rounded px-0.5"
                             aria-label="Message info"
                           >
-                            <MessageTicks message={item} groupMemberIds={group.memberIds} currentUserId={currentUser.id} />
+                            <MessageTicks
+                              message={item}
+                              groupMemberIds={group.memberIds}
+                              currentUserId={currentUser.id}
+                              presenceByUserId={presenceByUserId}
+                            />
                           </button>
                         )}
                       </div>
@@ -815,18 +827,14 @@ const GroupInfo = ({ groupId }: { groupId: string }) => {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
   const group = groups.find((item) => item.id === groupId);
-  const isPublicChat = groupId === PUBLIC_CHAT_ID;
   const isMember = Boolean(currentUser && group?.memberIds.includes(currentUser.id));
 
   if (!currentUser) return null;
   if (!group || !isMember) return <Navigate to="/groups" replace />;
 
-  const members = (() => {
-    const groupUsers = group.memberIds.map((id) => users.find((user) => user.id === id)).filter(Boolean) as User[];
-    return isPublicChat ? uniqueUsersByUsername(groupUsers, currentUser.id) : groupUsers;
-  })();
+  const members = group.memberIds.map((id) => users.find((user) => user.id === id)).filter(Boolean) as User[];
   const connectionIds = getAcceptedConnectionIds(currentUser.id);
-  const addableUsers = isPublicChat ? [] : users.filter((user) => connectionIds.includes(user.id) && !group.memberIds.includes(user.id));
+  const addableUsers = users.filter((user) => connectionIds.includes(user.id) && !group.memberIds.includes(user.id));
 
   const startEditingName = () => {
     setName(group.name);
@@ -900,11 +908,9 @@ const GroupInfo = ({ groupId }: { groupId: string }) => {
                 <h2 className="break-words [overflow-wrap:anywhere] text-xl font-black leading-tight">{group.name}</h2>
                 <p className="text-sm text-muted-foreground">{members.length} members</p>
               </div>
-              {!isPublicChat && (
-                <Button variant="outline" onClick={startEditingName}>
-                  <Pencil className="mr-2 size-4" /> Edit name
-                </Button>
-              )}
+              <Button variant="outline" onClick={startEditingName}>
+                <Pencil className="mr-2 size-4" /> Edit name
+              </Button>
             </div>
           )}
         </section>
@@ -912,22 +918,20 @@ const GroupInfo = ({ groupId }: { groupId: string }) => {
         <section className="space-y-2">
           <div className="flex items-center justify-between gap-3">
             <h3 className="font-black">Members</h3>
-            {!isPublicChat && (
-              <Button size="sm" onClick={() => setAddOpen(true)}>
-                <UserPlus className="mr-1 size-4" /> Add
-              </Button>
-            )}
+            <Button size="sm" onClick={() => setAddOpen(true)}>
+              <UserPlus className="mr-1 size-4" /> Add
+            </Button>
           </div>
           {members.map((member) => (
             <PersonRow
               key={member.id}
               username={`${member.username}${member.id === currentUser.id ? " (you)" : ""}`}
               detail={formatPresence(presenceByUserId[member.id] ?? { active: false, lastSeen: member.lastSeen }, settings.timeFormat)}
-              action={!isPublicChat ? (
+              action={
                 <Button size="sm" variant="outline" onClick={() => removeMember(member.id)}>
                   <Trash2 className="mr-1 size-4" /> Remove
                 </Button>
-              ) : undefined}
+              }
             />
           ))}
         </section>
@@ -946,11 +950,9 @@ const GroupInfo = ({ groupId }: { groupId: string }) => {
           </span>
         </button>
 
-        {!isPublicChat && (
-          <Button variant="destructive" onClick={leave} className="w-full">
-            <LogOut className="mr-2 size-4" /> Exit group
-          </Button>
-        )}
+        <Button variant="destructive" onClick={leave} className="w-full">
+          <LogOut className="mr-2 size-4" /> Exit group
+        </Button>
       </div>
 
       <Dialog open={addOpen} onOpenChange={setAddOpen}>
@@ -975,19 +977,23 @@ const MessageTicks = ({
   message,
   groupMemberIds,
   currentUserId,
+  presenceByUserId,
 }: {
   message: GroupMessage;
   groupMemberIds: string[];
   currentUserId: string;
+  presenceByUserId: Record<string, { active?: boolean }>;
 }) => {
-  const recipientIds = groupMemberIds.filter((id) => id !== currentUserId);
+  const rawRecipientIds = message.recipientIds ?? groupMemberIds;
+  const recipientIds = rawRecipientIds.filter((id) => id !== message.senderId);
   const deliveredTo = message.deliveredTo ?? [message.senderId];
   const readBy = message.readBy ?? [message.senderId];
   const deliveredToAll = recipientIds.length > 0 && recipientIds.every((id) => deliveredTo.includes(id));
+  const recipientsOnline = recipientIds.length > 0 && recipientIds.every((id) => id === currentUserId || presenceByUserId[id]?.active);
   const seenByAll = recipientIds.length > 0 && recipientIds.every((id) => readBy.includes(id));
 
   if (seenByAll) return <DoubleTick className="size-3.5 text-[#60a5fa] dark:text-[#2563eb] animate-tick-bounce" strokeWidth={3} />;
-  if (deliveredToAll) return <DoubleTick className="size-3.5 text-white/90 dark:text-emerald-950/90 animate-tick-bounce" />;
+  if (deliveredToAll && recipientsOnline) return <DoubleTick className="size-3.5 text-white/90 dark:text-emerald-950/90 animate-tick-bounce" />;
   return <Check className="size-3.5 text-white/75 dark:text-emerald-950/75" />;
 };
 
@@ -1013,9 +1019,10 @@ const MessageInfoDialog = ({
 }) => {
   const deliveredTo = message?.deliveredTo ?? [];
   const readBy = message?.readBy ?? [];
+  const recipientIds = message?.recipientIds ?? members.map((m) => m.id);
   // Exclude both current user AND the message sender from the lists (WhatsApp behavior)
   const excludeIds = new Set([currentUserId, message?.senderId].filter(Boolean) as string[]);
-  const otherMembers = members.filter((member) => !excludeIds.has(member.id));
+  const otherMembers = members.filter((member) => recipientIds.includes(member.id) && !excludeIds.has(member.id));
   const seenMembers = otherMembers.filter((member) => readBy.includes(member.id));
   const deliveredMembers = otherMembers.filter((member) => deliveredTo.includes(member.id) && !readBy.includes(member.id));
   const waitingMembers = otherMembers.filter((member) => !deliveredTo.includes(member.id));
@@ -1198,11 +1205,9 @@ const ReactionSummary = ({ reactions }: { reactions?: Record<string, string> }) 
   );
 };
 
-const EncryptionNotice = ({ publicChat }: { publicChat: boolean }) => (
+const EncryptionNotice = () => (
   <div className="mx-auto max-w-[22rem] rounded-lg border border-border bg-card px-3 py-2 text-center text-[11px] font-semibold leading-5 text-muted-foreground shadow-soft">
-    {publicChat
-      ? "Messages in Announcements use the same encrypted chat features as groups. Notifications are muted by default."
-      : "Messages are end-to-end encrypted. Only people in this group can read them."}
+    Messages are end-to-end encrypted. Only people in this group can read them.
   </div>
 );
 

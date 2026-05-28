@@ -137,7 +137,7 @@ const normalizeEntity = <T extends { id: string; updatedAt?: number }>(
 export const pushSyncOperation = async (operation: SyncOperation) => {
   const services = await getServices();
   if (!services || !navigator.onLine || !services.auth.currentUser) return false;
-  const { arrayRemove, arrayUnion, deleteDoc, doc, setDoc, updateDoc } = await import("firebase/firestore");
+  const { arrayRemove, arrayUnion, deleteDoc, doc, runTransaction, setDoc, updateDoc } = await import("firebase/firestore");
 
   if (operation.type === "delete") {
     await deleteDoc(doc(services.db, operation.collection, operation.entityId));
@@ -163,6 +163,64 @@ export const pushSyncOperation = async (operation: SyncOperation) => {
     await updateDoc(postRef, {
       comments: arrayUnion(comment),
       updatedAt: payload.updatedAt,
+    });
+    return true;
+  }
+
+  if (operation.collection === "posts" && payload?.__op === "updateComment") {
+    const postRef = doc(services.db, "posts", operation.entityId);
+    const commentId = String(payload.commentId ?? "");
+    const content = String(payload.content ?? "").trim();
+    const currentUserId = services.auth.currentUser.uid;
+    if (!commentId || !content) return false;
+    await runTransaction(services.db, async (transaction) => {
+      const snap = await transaction.get(postRef);
+      if (!snap.exists()) throw new Error("Post not found");
+      const data = snap.data() as Record<string, unknown>;
+      const comments = Array.isArray(data.comments) ? data.comments as Record<string, unknown>[] : [];
+      let changed = false;
+      const nextComments = comments.map((comment) => {
+        if (comment.id !== commentId || comment.userId !== currentUserId) return comment;
+        changed = true;
+        return { ...comment, content, updatedAt: payload.updatedAt };
+      });
+      if (!changed) throw new Error("Comment not found");
+      transaction.update(postRef, { comments: nextComments, updatedAt: payload.updatedAt });
+    });
+    return true;
+  }
+
+  if (operation.collection === "posts" && payload?.__op === "deleteComment") {
+    const postRef = doc(services.db, "posts", operation.entityId);
+    const commentId = String(payload.commentId ?? "");
+    const currentUserId = services.auth.currentUser.uid;
+    if (!commentId) return false;
+    await runTransaction(services.db, async (transaction) => {
+      const snap = await transaction.get(postRef);
+      if (!snap.exists()) throw new Error("Post not found");
+      const data = snap.data() as Record<string, unknown>;
+      const comments = Array.isArray(data.comments) ? data.comments as Record<string, unknown>[] : [];
+      const postAuthorId = typeof data.userId === "string" ? data.userId : "";
+      const target = comments.find((comment) => comment.id === commentId);
+      if (!target || (target.userId !== currentUserId && postAuthorId !== currentUserId)) {
+        throw new Error("Comment not found");
+      }
+      const deleteIds = new Set([commentId]);
+      let changed = true;
+      while (changed) {
+        changed = false;
+        for (const comment of comments) {
+          if (typeof comment.id !== "string" || typeof comment.parentCommentId !== "string") continue;
+          if (deleteIds.has(comment.parentCommentId) && !deleteIds.has(comment.id)) {
+            deleteIds.add(comment.id);
+            changed = true;
+          }
+        }
+      }
+      transaction.update(postRef, {
+        comments: comments.filter((comment) => typeof comment.id !== "string" || !deleteIds.has(comment.id)),
+        updatedAt: payload.updatedAt,
+      });
     });
     return true;
   }

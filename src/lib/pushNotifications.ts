@@ -41,12 +41,10 @@ export const setPushNotificationNavigationHandler = (handler: ((path: string) =>
 
 export const pathForNotification = (data?: { type?: string; link?: string } | null) => {
   if (!data) return "/dashboard";
-  if ((data.type === "group_message" || data.type === "group_reaction") && data.link?.startsWith("/groups/")) return data.link;
-  if ((data.type === "post_like" || data.type === "post_comment") && data.link) return data.link;
-  if (data.type === "task_reminder") return data.link || "/tasks";
+  if (data.link) return data.link;
+  if (data.type === "task_reminder") return "/tasks";
   if (data.type === "connection_request" || data.type === "connection_accepted") return "/friends";
-  if (data.type === "unlogged_gaps") return "/dashboard";
-  return data.link || "/dashboard";
+  return "/dashboard";
 };
 
 export const clearDeliveredPushNotifications = async () => {

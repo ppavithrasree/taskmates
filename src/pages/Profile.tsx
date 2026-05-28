@@ -94,8 +94,8 @@ const Profile = () => {
                 </p>
               )}
               <div className="mt-3 flex flex-wrap gap-2 text-xs font-bold">
-                <span className="rounded-full bg-primary-soft px-2 py-1 text-primary">{stats.total} saved posts</span>
-                <span className="rounded-full bg-success-soft px-2 py-1 text-success">Saved for {target.retentionDays} days</span>
+                <span className="rounded-full bg-purple-500/10 px-2 py-1 text-purple-600 dark:text-purple-400">{stats.total} saved posts</span>
+                <span className="rounded-full bg-emerald-500/10 px-2 py-1 text-emerald-600 dark:text-emerald-400">Saved for {target.retentionDays} days</span>
               </div>
             </div>
           </div>
@@ -103,7 +103,7 @@ const Profile = () => {
 
         {isOwn && (
           <section className="rounded-lg border border-border bg-card p-4 shadow-soft">
-            <h2 className="mb-3 flex items-center gap-2 font-black"><KeyRound className="size-4 text-primary" /> Change password</h2>
+            <h2 className="mb-3 flex items-center gap-2 font-black"><KeyRound className="size-4 text-purple-500" /> Change password</h2>
             <div className="flex gap-2">
               <Input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="New password" className="bg-background" />
               <Button onClick={savePassword}>Save</Button>
@@ -112,27 +112,28 @@ const Profile = () => {
         )}
 
         <section className="grid grid-cols-3 gap-3">
-          <Info icon={Timer} label="Today coverage" value={`${stats.coveragePercent}%`} />
-          <Info icon={Shield} label="Privacy" value={privacyLabel} />
+          <Info icon={Timer} label="Today coverage" value={`${stats.coveragePercent}%`} iconColor="text-sky-500" />
+          <Info icon={Shield} label="Privacy" value={privacyLabel} iconColor="text-emerald-500" />
           <Info
             icon={Users}
             label="Connections"
             value={`${connectionCount}`}
             onClick={canSeeTargetConnections ? () => setShowConnections((open) => !open) : undefined}
             active={showConnections}
+            iconColor="text-purple-500"
           />
         </section>
 
         {canSeeTargetConnections && showConnections && (
           <section className="space-y-3 rounded-lg border border-border bg-card p-4 shadow-soft">
-            <h2 className="flex items-center gap-2 font-black"><Users className="size-4 text-primary" /> Connections</h2>
+            <h2 className="flex items-center gap-2 font-black"><Users className="size-4 text-teal-500" /> Connections</h2>
             {targetConnections.length === 0 ? (
               <p className="text-sm text-muted-foreground">No connections yet.</p>
             ) : (
               <div className="grid gap-2 sm:grid-cols-2">
                 {targetConnections.map((user) => (
                   <Link key={user.id} to={`/profile/${user.username}`} className="flex items-center gap-3 rounded-lg border border-border bg-background p-3">
-                    <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary-soft font-black text-primary">
+                    <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-500/20 to-purple-500/20 font-black text-indigo-600 dark:text-indigo-400">
                       {user.username.charAt(0).toUpperCase()}
                     </span>
                     <span className="min-w-0 truncate font-bold">{user.username}</span>
@@ -162,12 +163,14 @@ const Info = ({
   value,
   onClick,
   active = false,
+  iconColor = "text-accent",
 }: {
   icon: typeof Timer;
   label: string;
   value: string;
   onClick?: () => void;
   active?: boolean;
+  iconColor?: string;
 }) => (
   <button
     type="button"
@@ -175,7 +178,7 @@ const Info = ({
     disabled={!onClick}
     className={`min-w-0 rounded-lg border border-border bg-card p-3 text-left shadow-soft sm:p-4 ${onClick ? "transition-smooth hover:border-primary/50 active:scale-[0.98]" : "cursor-default"} ${active ? "border-primary bg-primary-soft" : ""}`}
   >
-    <Icon className="mb-2 size-4 text-accent" />
+    <Icon className={`mb-2 size-4 ${iconColor}`} />
     <p className="break-words text-sm font-black capitalize leading-tight min-[360px]:text-base sm:text-xl">{value}</p>
     <p className="text-xs text-muted-foreground">{label}</p>
   </button>

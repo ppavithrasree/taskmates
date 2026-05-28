@@ -59,7 +59,7 @@ const Settings = () => {
     <AppShell title="Settings">
       <div className="mx-auto max-w-3xl space-y-5 px-4 py-5">
         <section className="rounded-lg border border-border bg-card p-4 shadow-soft">
-          <h2 className="mb-3 flex items-center gap-2 font-black"><Sun className="size-4 text-primary" /> Theme</h2>
+          <h2 className="mb-3 flex items-center gap-2 font-black"><Sun className="size-4 text-amber-500 fill-amber-500" /> Theme</h2>
           <div className="grid grid-cols-2 gap-2">
             <Button
               type="button"
@@ -67,7 +67,7 @@ const Settings = () => {
               className={settings.theme === "light" ? "border-primary bg-primary-soft text-primary" : "bg-card"}
               onClick={() => updateTheme("light")}
             >
-              <Sun className="mr-2 size-4" /> Light
+              <Sun className="mr-2 size-4 text-amber-500 fill-amber-500" /> Light
             </Button>
             <Button
               type="button"
@@ -75,13 +75,13 @@ const Settings = () => {
               className={settings.theme === "dark" ? "border-accent bg-accent-soft text-accent" : "bg-card"}
               onClick={() => updateTheme("dark")}
             >
-              <Moon className="mr-2 size-4" /> Dark
+              <Moon className="mr-2 size-4 text-indigo-400 fill-indigo-400" /> Dark
             </Button>
           </div>
         </section>
 
         <section className="rounded-lg border border-border bg-card p-4 shadow-soft">
-          <h2 className="mb-3 flex items-center gap-2 font-black"><Clock3 className="size-4 text-primary" /> Time Format</h2>
+          <h2 className="mb-3 flex items-center gap-2 font-black"><Clock3 className="size-4 text-sky-500" /> Time Format</h2>
           <div className="grid grid-cols-2 gap-2">
             <Button
               type="button"
@@ -103,7 +103,7 @@ const Settings = () => {
         </section>
 
         <section className="space-y-4 rounded-lg border border-border bg-card p-4 shadow-soft">
-          <h2 className="flex items-center gap-2 font-black"><Shield className="size-4 text-primary" /> Privacy</h2>
+          <h2 className="flex items-center gap-2 font-black"><Shield className="size-4 text-emerald-500" /> Privacy</h2>
           <Select value={currentUser.privacy} onValueChange={(value) => updateUserSettings({ privacy: value as Visibility })}>
             <SelectTrigger className="h-11 bg-background"><SelectValue /></SelectTrigger>
             <SelectContent>
@@ -133,7 +133,7 @@ const Settings = () => {
         <section className="space-y-4 rounded-lg border border-border bg-card p-4 shadow-soft">
           <div className="flex w-full items-center justify-between gap-3 rounded-lg bg-background p-3 text-left">
             <div className="flex min-w-0 items-center gap-3">
-              {currentUser.notificationsEnabled === false ? <BellOff className="size-4 text-muted-foreground" /> : <Bell className="size-4 text-primary" />}
+              {currentUser.notificationsEnabled === false ? <BellOff className="size-4 text-muted-foreground" /> : <Bell className="size-4 text-rose-500 fill-rose-500" />}
               <div className="min-w-0">
                 <p className="font-black">Notifications</p>
                 <p className="text-xs text-muted-foreground">{currentUser.notificationsEnabled === false ? "Off" : "On"}</p>
@@ -151,7 +151,7 @@ const Settings = () => {
 
         <section className="space-y-4 rounded-lg border border-border bg-card p-4 shadow-soft">
           <div className="flex items-center justify-between gap-3">
-            <h2 className="flex items-center gap-2 font-black"><Trash2 className="size-4 text-primary" /> Auto-Delete Period</h2>
+            <h2 className="flex items-center gap-2 font-black"><Trash2 className="size-4 text-red-500" /> Auto-Delete Period</h2>
             <Button type="button" size="icon" variant="ghost" className="size-8" onClick={() => setRetentionInfoOpen(true)} aria-label="Auto-delete info">
               <Info className="size-4" />
             </Button>
@@ -272,7 +272,7 @@ const AiSettingsCard = ({ userId }: { userId: string }) => {
     <section className="space-y-4 rounded-lg border border-border bg-card p-4 shadow-soft">
       <div className="flex items-center justify-between gap-3 rounded-lg bg-background p-3">
         <div className="flex min-w-0 items-center gap-3">
-          <Bot className={enabled ? "size-4 text-primary" : "size-4 text-muted-foreground"} />
+          <Bot className={enabled ? "size-4 text-purple-500" : "size-4 text-muted-foreground"} />
           <div className="min-w-0">
             <h2 className="font-black">{AI_NAME}</h2>
             <p className="text-xs text-muted-foreground">{enabled ? "Assistant enabled" : "Assistant disabled"}</p>
@@ -292,7 +292,7 @@ const AiSettingsCard = ({ userId }: { userId: string }) => {
         <div className="space-y-3 rounded-lg border border-border bg-background p-3">
           <div className="flex items-center justify-between gap-3">
             <div className="flex min-w-0 items-center gap-2">
-              <KeyRound className="size-4 text-primary" />
+              <KeyRound className="size-4 text-indigo-500" />
               <p className="font-bold">Gemini API key</p>
             </div>
             {hasKey && !editing && (

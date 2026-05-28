@@ -11,6 +11,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 
 interface Props {
   initial?: Post;
+  prefilledStart?: number;
+  prefilledEnd?: number;
   onClose?: () => void;
   onSaved?: () => void;
 }
@@ -55,11 +57,11 @@ const fromParts = (parts: DateParts, format: "12" | "24" = "24") => {
   ).getTime();
 };
 
-export const PostForm = ({ initial, onClose, onSaved }: Props) => {
+export const PostForm = ({ initial, prefilledStart, prefilledEnd, onClose, onSaved }: Props) => {
   const { currentUser, users, settings, addPost, updatePost, getAcceptedConnectionIds } = useApp();
   const timeFormat = settings.timeFormat ?? "24";
-  const [startParts, setStartParts] = useState(() => toParts(initial?.startTime ?? Date.now() - 30 * 60_000, timeFormat));
-  const [endParts, setEndParts] = useState(() => toParts(initial?.endTime ?? Date.now(), timeFormat));
+  const [startParts, setStartParts] = useState(() => toParts(initial?.startTime ?? prefilledStart ?? Date.now() - 30 * 60_000, timeFormat));
+  const [endParts, setEndParts] = useState(() => toParts(initial?.endTime ?? prefilledEnd ?? Date.now(), timeFormat));
   const [content, setContent] = useState(initial?.content ?? "");
   const [visibility, setVisibility] = useState<Visibility>(initial?.visibility ?? currentUser?.privacy ?? "public");
   const [customUsernames, setCustomUsernames] = useState<string[]>(initial?.customUsernames ?? currentUser?.customUsernames ?? []);

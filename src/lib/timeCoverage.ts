@@ -106,8 +106,17 @@ export const minutesToLabel = (minute: number) => {
 
 export const gapLabel = (gap: TimeGap) => `${minutesToLabel(gap.start)}-${minutesToLabel(gap.end)}`;
 
+export type GapType = "complete" | "continuous" | "non_continuous";
+
+export const classifyGaps = (gaps: TimeGap[]): { type: GapType; gaps: TimeGap[] } => {
+  if (gaps.length === 0) return { type: "complete", gaps: [] };
+  if (gaps.length === 1) return { type: "continuous", gaps };
+  return { type: "non_continuous", gaps };
+};
+
 export const unloggedGapsBody = (gaps: TimeGap[]) => {
-  if (gaps.length === 1) return `You have not kept logs for ${gapLabel(gaps[0])}.`;
+  const { type } = classifyGaps(gaps);
+  if (type === "continuous") return `You have not kept logs for ${gapLabel(gaps[0])}.`;
   return "There are some time slots that you have not kept logs for.";
 };
 

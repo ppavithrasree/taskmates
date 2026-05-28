@@ -11,6 +11,7 @@ export interface User {
   customUsernames: string[];
   retentionDays: number;
   theme?: "light" | "dark";
+  timeFormat?: "12" | "24";
   mutedGroupIds?: string[];
   notificationsEnabled?: boolean;
   lastSeen?: number;
@@ -98,7 +99,8 @@ export type NotificationType =
   | "group_message"
   | "group_reaction"
   | "post_like"
-  | "post_comment";
+  | "post_comment"
+  | "post_reply";
 
 export interface AppNotification {
   id: string;

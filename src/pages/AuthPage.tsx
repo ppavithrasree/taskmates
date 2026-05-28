@@ -57,9 +57,9 @@ const AuthPage = ({ mode }: Props) => {
     <main className="relative min-h-dvh overflow-hidden bg-background px-4 py-8">
       {/* Background decoration */}
       <div className="pointer-events-none absolute inset-0">
-        <div className="absolute -left-20 -top-20 size-64 rounded-full bg-primary/15 blur-3xl animate-float" />
-        <div className="absolute -bottom-16 -right-16 size-56 rounded-full bg-accent/15 blur-3xl" style={{ animationDelay: "1.5s" }} />
-        <div className="absolute left-1/2 top-1/3 size-40 rounded-full bg-success/10 blur-3xl animate-float" style={{ animationDelay: "0.8s" }} />
+        <div className="absolute -left-20 -top-20 size-64 rounded-full bg-pink-500/10 blur-3xl" />
+        <div className="absolute -bottom-16 -right-16 size-56 rounded-full bg-purple-600/10 blur-3xl" />
+        <div className="absolute left-1/2 top-1/3 size-40 rounded-full bg-emerald-500/10 blur-3xl" />
       </div>
 
       <div className="relative mx-auto flex min-h-[calc(100dvh-4rem)] max-w-md flex-col justify-center">

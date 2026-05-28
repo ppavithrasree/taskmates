@@ -17,6 +17,23 @@ const Dashboard = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const [open, setOpen] = useState(false);
+
+  const autoLog = searchParams.get("autoLog") === "1";
+  const gapStart = searchParams.get("gapStart");
+  const gapEnd = searchParams.get("gapEnd");
+  const dayParam = searchParams.get("day");
+
+  const prefilledStart = useMemo(() => {
+    if (!autoLog || !gapStart) return undefined;
+    const dayStart = dayParam ? Number(dayParam) : startOfLocalDay(Date.now());
+    return dayStart + Number(gapStart) * 60_000;
+  }, [autoLog, gapStart, dayParam]);
+
+  const prefilledEnd = useMemo(() => {
+    if (!autoLog || !gapEnd) return undefined;
+    const dayStart = dayParam ? Number(dayParam) : startOfLocalDay(Date.now());
+    return dayStart + Number(gapEnd) * 60_000;
+  }, [autoLog, gapEnd, dayParam]);
   const [postSearchOpen, setPostSearchOpen] = useState(false);
   const [postSearch, setPostSearch] = useState("");
   const logHistoryRef = useRef(false);
@@ -57,6 +74,51 @@ const Dashboard = () => {
   }, [markNotificationsForLinkRead]);
 
   useEffect(() => {
+    if (autoLog) {
+      setOpen(true);
+    }
+  }, [autoLog]);
+
+  const targetPostId = searchParams.get("post");
+  const targetCommentId = searchParams.get("comment");
+
+  useEffect(() => {
+    if (targetPostId && !selectedUserId) {
+      const targetPost = posts.find((p) => p.id === targetPostId);
+      if (targetPost) {
+        navigate(`/dashboard?feedUser=${encodeURIComponent(targetPost.userId)}&post=${targetPostId}${targetCommentId ? `&comment=${targetCommentId}` : ""}`, { replace: true });
+      }
+    }
+  }, [targetPostId, selectedUserId, posts, navigate, targetCommentId]);
+
+  useEffect(() => {
+    if (!targetPostId) return;
+    const timer = window.setTimeout(() => {
+      if (targetCommentId) {
+        const commentEl = document.getElementById(`comment-${targetCommentId}`);
+        if (commentEl) {
+          commentEl.scrollIntoView({ behavior: "smooth", block: "center" });
+          commentEl.classList.add("ring-2", "ring-accent");
+          window.setTimeout(() => {
+            commentEl.classList.remove("ring-2", "ring-accent");
+          }, 2000);
+          return;
+        }
+      }
+      const postEl = document.getElementById(`post-${targetPostId}`);
+      if (postEl) {
+        postEl.scrollIntoView({ behavior: "smooth", block: "center" });
+        postEl.classList.add("ring-2", "ring-accent");
+        window.setTimeout(() => {
+          postEl.classList.remove("ring-2", "ring-accent");
+        }, 2000);
+      }
+    }, 400);
+
+    return () => window.clearTimeout(timer);
+  }, [targetPostId, targetCommentId, selectedUserId]);
+
+  useEffect(() => {
     if (!open || logHistoryRef.current) return;
     window.history.pushState({ ...window.history.state, taskmatesModal: "log-activity" }, "", window.location.href);
     logHistoryRef.current = true;
@@ -79,6 +141,9 @@ const Dashboard = () => {
       window.history.back();
     }
     setOpen(false);
+    if (autoLog) {
+      navigate("/dashboard", { replace: true });
+    }
   };
 
   const openUserFeed = (userId: string) => {
@@ -201,7 +266,12 @@ const Dashboard = () => {
       <Dialog open={open} onOpenChange={(nextOpen) => nextOpen ? setOpen(true) : closeLog()}>
         <DialogContent className="max-h-[90dvh] overflow-y-auto rounded-lg">
           <DialogHeader><DialogTitle>Log activity</DialogTitle></DialogHeader>
-          <PostForm onClose={closeLog} onSaved={closeLog} />
+          <PostForm
+            onClose={closeLog}
+            onSaved={closeLog}
+            prefilledStart={prefilledStart}
+            prefilledEnd={prefilledEnd}
+          />
         </DialogContent>
       </Dialog>
     </AppShell>

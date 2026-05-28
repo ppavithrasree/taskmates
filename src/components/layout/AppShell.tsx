@@ -1,17 +1,18 @@
 import { ReactNode } from "react";
 import { NavLink, Navigate, useNavigate } from "react-router-dom";
-import { Bell, ClipboardList, LayoutDashboard, LogOut, Search, Settings, User, UsersRound } from "lucide-react";
+import { Bell, ClipboardList, LayoutDashboard, LogOut, Search, Settings, User, UsersRound, Download } from "lucide-react";
 import { TaskMateAIProvider } from "@/features/ai/TaskMateAIProvider";
 import { useApp } from "@/context/AppContext";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { useOtaUpdate } from "@/hooks/useOtaUpdate";
 
 const navItems = [
-  { title: "Feed", url: "/dashboard", icon: LayoutDashboard, badgeKey: null },
-  { title: "Search", url: "/friends", icon: Search, badgeKey: "pendingRequestCount" as const },
-  { title: "Groups", url: "/groups", icon: UsersRound, badgeKey: "unreadGroupCount" as const },
-  { title: "Profile", url: "/profile", icon: User, badgeKey: null },
-  { title: "Settings", url: "/settings", icon: Settings, badgeKey: null },
+  { title: "Feed", url: "/dashboard", icon: LayoutDashboard, badgeKey: null, color: "text-teal-500" },
+  { title: "Search", url: "/friends", icon: Search, badgeKey: "pendingRequestCount" as const, color: "text-purple-500" },
+  { title: "Groups", url: "/groups", icon: UsersRound, badgeKey: "unreadGroupCount" as const, color: "text-emerald-500" },
+  { title: "Profile", url: "/profile", icon: User, badgeKey: null, color: "text-amber-500" },
+  { title: "Settings", url: "/settings", icon: Settings, badgeKey: null, color: "text-slate-500" },
 ];
 
 const Badge = ({ count }: { count: number }) => {
@@ -34,6 +35,7 @@ export const AppShell = ({
 }) => {
   const { currentUser, logout, unreadNotificationCount, pendingRequestCount, unreadGroupCount } = useApp();
   const navigate = useNavigate();
+  const { updateAvailable, downloadUpdate } = useOtaUpdate();
 
   if (!currentUser) return <Navigate to="/login" replace />;
 
@@ -59,14 +61,25 @@ export const AppShell = ({
             <h1 className="truncate text-base font-bold tracking-tight">{title ?? "TaskMates"}</h1>
           </div>
           <div className="flex items-center gap-0.5">
-            <Button variant="ghost" size="icon" onClick={() => navigate("/notifications")} aria-label="Notifications" className="relative size-9 rounded-md hover:bg-primary/10 transition-smooth">
+            {updateAvailable && (
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={downloadUpdate}
+                aria-label="Download update"
+                className="relative size-9 rounded-md bg-gradient-to-r from-amber-500 via-orange-500 to-red-500 text-white animate-pulse shadow-sm"
+              >
+                <Download className="size-[18px]" />
+              </Button>
+            )}
+            <Button variant="ghost" size="icon" onClick={() => navigate("/notifications")} aria-label="Notifications" className="relative size-9 rounded-md text-amber-500 hover:bg-amber-500/10 hover:text-amber-600 transition-smooth">
               <Bell className="size-[18px]" />
               <Badge count={unreadNotificationCount} />
             </Button>
-            <Button variant="ghost" size="icon" onClick={() => navigate("/tasks")} aria-label="My tasks" className="size-9 rounded-md hover:bg-accent/10 transition-smooth">
+            <Button variant="ghost" size="icon" onClick={() => navigate("/tasks")} aria-label="My tasks" className="size-9 rounded-md text-indigo-500 hover:bg-indigo-500/10 hover:text-indigo-600 transition-smooth">
               <ClipboardList className="size-[18px]" />
             </Button>
-            <Button variant="ghost" size="icon" onClick={signOut} aria-label="Logout" className="size-9 rounded-md hover:bg-destructive/10 transition-smooth">
+            <Button variant="ghost" size="icon" onClick={signOut} aria-label="Logout" className="size-9 rounded-md text-destructive hover:bg-destructive/10 hover:text-red-600 transition-smooth">
               <LogOut className="size-[18px]" />
             </Button>
           </div>
@@ -96,7 +109,7 @@ export const AppShell = ({
               {({ isActive }) => (
                 <>
                   <div className="relative">
-                    <item.icon className={cn("size-[20px] transition-all duration-200", isActive && "drop-shadow-sm")} />
+                    <item.icon className={cn("size-[20px] transition-all duration-200", isActive ? item.color : "text-muted-foreground", isActive && "drop-shadow-sm")} />
                     {item.badgeKey && <Badge count={badgeCounts[item.badgeKey] ?? 0} />}
                   </div>
                   <span className={cn("transition-all duration-200", isActive && "font-extrabold")}>{item.title}</span>

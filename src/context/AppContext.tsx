@@ -12,9 +12,9 @@ import {
   subscribeFirebaseState,
   usernameToEmail,
 } from "@/lib/firebaseSync";
-import { analyzeDayCoverage, dateKey, isValidPostRange, postsInLocalDay, startOfLocalDay, unloggedGapsBody } from "@/lib/timeCoverage";
-import { requestNotificationPermission, scheduleDailyMidnightNotification, showLocalNotification } from "@/lib/notifications";
-import { initFCMPush, sendFCMPush } from "@/lib/pushNotifications";
+import { analyzeDayCoverage, classifyGaps, dateKey, gapLabel, isValidPostRange, postsInLocalDay, startOfLocalDay, unloggedGapsBody } from "@/lib/timeCoverage";
+import { requestNotificationPermission, scheduleDailyMidnightNotification, showLocalNotification, clearDeliveredLocalNotifications } from "@/lib/notifications";
+import { initFCMPush, sendFCMPush, clearDeliveredPushNotifications } from "@/lib/pushNotifications";
 import { decryptGroupMessageFromStorage, encryptGroupMessageForStorage } from "@/lib/groupMessageCrypto";
 
 import { connectPresence, emitTyping as emitSocketTyping, updatePresenceGroups, type PresenceStatus } from "@/lib/presence";
@@ -26,8 +26,8 @@ const LAST_SEEN_KEY = "taskmates_last_seen_cache_v1";
 const DEFAULT_THEME: "light" | "dark" = "dark";
 const DEFAULT_RETENTION_DAYS = 5;
 const RETENTION_DEFAULT_MIGRATION_KEY = "taskmates_retention_default_migrated_v1";
+/** @deprecated removed — kept only so old serialised state doesn't crash */
 export const PUBLIC_CHAT_ID = "taskmates_public_chat";
-const PUBLIC_CHAT_UNMUTED_ID = `${PUBLIC_CHAT_ID}:unmuted`;
 
 export interface AppContextValue {
   currentUser: User | null;
@@ -262,20 +262,8 @@ const mergeComments = (a?: PostComment[], b?: PostComment[]) => {
   return [...map.values()].sort((left, right) => left.createdAt - right.createdAt);
 };
 
-const makePublicChatGroup = (users: User[], now = Date.now()): Group => ({
-  id: PUBLIC_CHAT_ID,
-  name: "Announcements",
-  memberIds: [...new Set(users.map((user) => user.id))],
-  createdBy: "system",
-  createdAt: 0,
-  updatedAt: now,
-});
-
-const resolveGroup = (groups: Group[], users: User[], groupId: string, messages: GroupMessage[] = []) => {
-  if (groupId !== PUBLIC_CHAT_ID) return groups.find((item) => item.id === groupId);
-  const lastMessageAt = Math.max(0, ...messages.filter((item) => item.groupId === PUBLIC_CHAT_ID).map((item) => item.createdAt));
-  return makePublicChatGroup(users, lastMessageAt || Date.now());
-};
+const resolveGroup = (groups: Group[], _users: User[], groupId: string, _messages: GroupMessage[] = []) =>
+  groups.find((item) => item.id === groupId);
 
 const sameMap = (a?: Record<string, string>, b?: Record<string, string>) =>
   JSON.stringify(a ?? {}) === JSON.stringify(b ?? {});
@@ -303,7 +291,7 @@ const mergePosts = (local: Post[], remote: Post[]) => {
           ? existing.likes
           : mergeIds(existing.likes, item.likes),
       reactions: item.updatedAt >= existing.updatedAt ? (item.reactions ?? existing.reactions) : (existing.reactions ?? item.reactions),
-      comments: item.updatedAt >= existing.updatedAt ? (item.comments ?? []) : mergeComments(existing.comments, item.comments),
+      comments: mergeComments(existing.comments, item.comments),
       updatedAt: Math.max(existing.updatedAt, item.updatedAt),
       dirty: item.updatedAt >= existing.updatedAt ? false : existing.dirty,
     });
@@ -447,6 +435,34 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     [online]
   );
 
+  const commitOperations = useCallback(
+    (operations: ReturnType<typeof queueFor>[]) => {
+      if (operations.length === 0) return;
+      setState((snapshot) => ({
+        ...snapshot,
+        syncQueue: [...snapshot.syncQueue, ...operations],
+      }));
+
+      void (async () => {
+        if (!online) return;
+        for (const op of operations) {
+          try {
+            const pushed = await pushSyncOperation(op);
+            if (pushed) {
+              setState((snapshot) => ({
+                ...clearSyncedDirtyFlags(snapshot, [op]),
+                syncQueue: snapshot.syncQueue.filter((item) => item.id !== op.id),
+              }));
+            }
+          } catch (err) {
+            console.error("Batch sync operation failed:", err);
+          }
+        }
+      })();
+    },
+    [online]
+  );
+
   useEffect(() => {
     if (!currentUser || currentUser.retentionDays !== 15) return;
     const migrationKey = `${RETENTION_DEFAULT_MIGRATION_KEY}:${currentUser.id}`;
@@ -469,6 +485,14 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       settings: { ...snapshot.settings, theme: currentUser.theme ?? snapshot.settings.theme },
     }));
   }, [currentUser?.theme, state.settings.theme]);
+
+  useEffect(() => {
+    if (!currentUser?.timeFormat || currentUser.timeFormat === state.settings.timeFormat) return;
+    setState((snapshot) => ({
+      ...snapshot,
+      settings: { ...snapshot.settings, timeFormat: currentUser.timeFormat ?? snapshot.settings.timeFormat },
+    }));
+  }, [currentUser?.timeFormat, state.settings.timeFormat]);
 
   useEffect(() => {
     const onOnline = () => setOnline(true);
@@ -500,11 +524,8 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
 
   useEffect(() => {
     if (!currentUser || !appActive) return;
-    let lastSavedAt = 0;
     const saveLastSeen = () => {
       const now = Date.now();
-      if (now - lastSavedAt < 60_000) return;
-      lastSavedAt = now;
       const updated = { ...currentUser, lastSeen: now, updatedAt: now };
       const cache = loadLastSeenCache();
       cache[currentUser.id] = now;
@@ -516,7 +537,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       commitOperation(queueFor("users", "upsert", updated.id, updated));
     };
     const onVisibilityChange = () => {
-      if (document.visibilityState === "hidden") saveLastSeen();
+      saveLastSeen();
     };
     const onOffline = () => saveLastSeen();
     document.addEventListener("visibilitychange", onVisibilityChange);
@@ -687,22 +708,23 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
 
   // Mark messages as delivered (2 ticks) — runs when messages arrive from Firebase.
   // Uses atomic arrayUnion writes to prevent concurrent delivery marking race conditions.
-  // Uses a ref to track already-processed message IDs and prevent cascading re-renders.
   useEffect(() => {
     if (!currentUser || !appActive) return;
     const now = Date.now();
     const toDeliver: string[] = [];
     for (const message of state.groupMessages) {
       if (message.senderId === currentUser.id) continue;
-      if (deliveryProcessedRef.current.has(message.id)) continue;
       const group = resolveGroup(state.groups, state.users, message.groupId, state.groupMessages);
       if (!group?.memberIds.includes(currentUser.id)) continue;
       const deliveredTo = message.deliveredTo ?? [message.senderId];
-      if (deliveredTo.includes(currentUser.id)) {
-        deliveryProcessedRef.current.add(message.id);
-        continue;
-      }
-      deliveryProcessedRef.current.add(message.id);
+      if (deliveredTo.includes(currentUser.id)) continue;
+
+      // Check if we already have a pending delivery sync operation for this message
+      const isPending = state.syncQueue.some(
+        (op) => op.collection === "groupMessages" && op.entityId === message.id && (op.payload as any)?.__op === "markDelivered"
+      );
+      if (isPending) continue;
+
       toDeliver.push(message.id);
     }
 
@@ -718,14 +740,15 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     }));
 
     // Use atomic arrayUnion writes — no race conditions with concurrent deliveries
-    for (const messageId of toDeliver) {
-      commitOperation(queueFor("groupMessages", "upsert", messageId, {
+    const ops = toDeliver.map((messageId) =>
+      queueFor("groupMessages", "upsert", messageId, {
         __op: "markDelivered",
         userId: currentUser.id,
         updatedAt: now,
-      }));
-    }
-  }, [currentUser, appActive, state.groupMessages, state.groups, commitOperation]);
+      })
+    );
+    commitOperations(ops);
+  }, [currentUser, appActive, state.groupMessages, state.groups, state.syncQueue, commitOperations]);
 
   // Request notification permission on first login
   useEffect(() => {
@@ -877,13 +900,20 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     const notificationId = `unlogged_${userId}_${dateKey(dayStart)}`;
     if (snap.notifications.some((item) => item.id === notificationId)) return;
     const now = Date.now();
+    const { type: gapType, gaps } = classifyGaps(dayCoverage.gaps);
+    // Build link: continuous gap → auto-open log form pre-filled with gap time
+    let link = "/dashboard";
+    if (gapType === "continuous" && gaps.length === 1) {
+      const g = gaps[0];
+      link = `/dashboard?autoLog=1&gapStart=${g.start}&gapEnd=${g.end}&day=${dayStart}`;
+    }
     const notif: AppNotification = {
       id: notificationId,
       recipientId: userId,
       type: "unlogged_gaps",
-      title: "Unlogged Activity Gaps",
+      title: gapType === "continuous" ? "Missed Activity Log" : "Unlogged Activity Gaps",
       body: unloggedGapsBody(dayCoverage.gaps),
-      link: "/dashboard",
+      link,
       read: false,
       createdAt: now,
       updatedAt: now,
@@ -905,11 +935,18 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     const todayStart = startOfLocalDay(Date.now());
     const todayPosts = postsInLocalDay(state.posts, currentUser.id, todayStart);
     const coverage = analyzeDayCoverage(todayPosts, todayStart);
+    const { type: gapType, gaps } = classifyGaps(coverage.gaps);
     const body = coverage.isComplete ? undefined : unloggedGapsBody(coverage.gaps);
-    const scheduleKey = `${currentUser.id}:${dateKey(todayStart)}:${coverage.isComplete}:${body ?? ""}`;
+    let link = "/dashboard";
+    if (!coverage.isComplete && gapType === "continuous" && gaps.length === 1) {
+      const g = gaps[0];
+      link = `/dashboard?autoLog=1&gapStart=${g.start}&gapEnd=${g.end}`;
+    }
+    const title = gapType === "continuous" ? "Missed Activity Log" : "Unlogged Activity Gaps";
+    const scheduleKey = `${currentUser.id}:${dateKey(todayStart)}:${coverage.isComplete}:${body ?? ""}:${link}:${title}`;
     if (scheduleKey === midnightScheduleKeyRef.current) return;
     midnightScheduleKeyRef.current = scheduleKey;
-    scheduleDailyMidnightNotification(!coverage.isComplete, body);
+    scheduleDailyMidnightNotification(!coverage.isComplete, body, link, title);
   }, [currentUser, appActive, state.posts]);
 
   // Create one in-app/Firebase notification strictly at midnight for the previous day.
@@ -1253,29 +1290,55 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       dirty: true,
     };
     const updatedGroup = { ...group, updatedAt: now, dirty: true };
+    const groupOperation = queueFor("groups", "upsert", updatedGroup.id, updatedGroup);
+    const messageOperation = queueFor("groupMessages", "upsert", message.id, { ...message, content: undefined });
     setState((snapshot) => ({
       ...snapshot,
       groupMessages: [...snapshot.groupMessages, message],
-      groups: groupId === PUBLIC_CHAT_ID ? snapshot.groups : snapshot.groups.map((item) => item.id === groupId ? updatedGroup : item),
+      groups: snapshot.groups.map((item) => item.id === groupId ? updatedGroup : item),
+      syncQueue: [...snapshot.syncQueue, groupOperation, messageOperation],
     }));
-    commitOperation(queueFor("groupMessages", "upsert", message.id, { ...message, content: undefined }));
-    if (groupId !== PUBLIC_CHAT_ID) commitOperation(queueFor("groups", "upsert", updatedGroup.id, updatedGroup));
+    let messageSynced = false;
+    if (online) {
+      const completed: string[] = [];
+      try {
+        if (await pushSyncOperation(groupOperation)) completed.push(groupOperation.id);
+        if (await pushSyncOperation(messageOperation)) {
+          completed.push(messageOperation.id);
+          messageSynced = true;
+        }
+      } catch (err) {
+        console.error("Failed to sync group message before push:", err);
+      }
+      if (completed.length) {
+        setState((snapshot) => {
+          const completedSet = new Set(completed);
+          const completedOperations = snapshot.syncQueue.filter((op) => completedSet.has(op.id));
+          const cleanedSnapshot = clearSyncedDirtyFlags(snapshot, completedOperations);
+          return {
+            ...cleanedSnapshot,
+            syncQueue: cleanedSnapshot.syncQueue.filter((op) => !completedSet.has(op.id)),
+          };
+        });
+      }
+    }
 
     // Notify all group members except sender (skip muted users)
+    if (!messageSynced) return { ok: true };
     const pushBody = clean.length > 120 ? `${clean.slice(0, 117)}...` : clean;
     await Promise.all(
       group.memberIds.map(async (memberId) => {
         if (memberId === currentUser.id) return;
         const member = state.users.find((u) => u.id === memberId);
         const mutedIds = member?.mutedGroupIds ?? [];
-        const isMuted = groupId === PUBLIC_CHAT_ID ? !mutedIds.includes(PUBLIC_CHAT_UNMUTED_ID) : mutedIds.includes(groupId);
+        const isMuted = mutedIds.includes(groupId);
         if (isMuted) return;
         await createNotification(
           memberId,
           "group_message",
           group.name,
           `${currentUser.username}: ${pushBody}`,
-          `/groups/${groupId}`,
+          `/groups/${groupId}?msg=${message.id}`,
           { messageId: message.id, groupId },
           false,
           true
@@ -1411,8 +1474,8 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         "group_reaction",
         group.name,
         `${currentUser.username} reacted ${cleanReaction} to your message.`,
-        `/groups/${message.groupId}`,
-        undefined,
+        `/groups/${message.groupId}?msg=${message.id}`,
+        { messageId: message.id, groupId: group.id },
         false,
         true
       );
@@ -1421,53 +1484,52 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const markGroupMessagesRead: AppContextValue["markGroupMessagesRead"] = useCallback((groupId) => {
-    const snap = stateRef.current;
-    const user = snap.users.find((u) => u.id === currentUserId);
-    if (!user) return;
-    const group = resolveGroup(snap.groups, snap.users, groupId, snap.groupMessages);
-    if (!group?.memberIds.includes(user.id)) return;
-
+    if (!currentUserId) return;
     const now = Date.now();
-    const toMark: string[] = [];
-    for (const message of snap.groupMessages) {
-      if (message.groupId !== groupId || message.senderId === user.id) continue;
-      const deliveredTo = message.deliveredTo ?? [message.senderId];
-      const readBy = message.readBy ?? [message.senderId];
-      const alreadyDelivered = deliveredTo.includes(user.id);
-      const alreadyRead = readBy.includes(user.id);
-      if (alreadyDelivered && alreadyRead) continue;
-      toMark.push(message.id);
-    }
 
-    if (toMark.length === 0) return;
-    // Update local state immediately
-    setState((snapshot) => ({
-      ...snapshot,
-      groupMessages: snapshot.groupMessages.map((message) => {
-        if (!toMark.includes(message.id)) return message;
+    setState((snapshot) => {
+      const user = snapshot.users.find((u) => u.id === currentUserId);
+      if (!user) return snapshot;
+      const group = resolveGroup(snapshot.groups, snapshot.users, groupId, snapshot.groupMessages);
+      if (!group?.memberIds.includes(user.id)) return snapshot;
+
+      const toMark: string[] = [];
+      const updatedMessages = snapshot.groupMessages.map((message) => {
+        if (message.groupId !== groupId || message.senderId === user.id) return message;
+        const deliveredTo = message.deliveredTo ?? [message.senderId];
+        const readBy = message.readBy ?? [message.senderId];
+        const alreadyDelivered = deliveredTo.includes(user.id);
+        const alreadyRead = readBy.includes(user.id);
+        if (alreadyDelivered && alreadyRead) return message;
+        toMark.push(message.id);
         return {
           ...message,
-          deliveredTo: (message.deliveredTo ?? [message.senderId]).includes(user.id)
-            ? message.deliveredTo
-            : [...(message.deliveredTo ?? [message.senderId]), user.id],
-          readBy: (message.readBy ?? [message.senderId]).includes(user.id)
-            ? message.readBy
-            : [...(message.readBy ?? [message.senderId]), user.id],
+          deliveredTo: alreadyDelivered ? deliveredTo : [...deliveredTo, user.id],
+          readBy: alreadyRead ? readBy : [...readBy, user.id],
           updatedAt: now,
         };
-      }),
-    }));
+      });
 
-    // Use atomic arrayUnion writes for each message
-    for (const messageId of toMark) {
-      deliveryProcessedRef.current.add(messageId);
-      commitOperation(queueFor("groupMessages", "upsert", messageId, {
-        __op: "markRead",
-        userId: user.id,
-        updatedAt: now,
-      }));
-    }
-  }, [currentUserId, commitOperation]);
+      if (toMark.length === 0) return snapshot;
+
+      setTimeout(() => {
+        const ops = toMark.map((messageId) => {
+          deliveryProcessedRef.current.add(messageId);
+          return queueFor("groupMessages", "upsert", messageId, {
+            __op: "markRead",
+            userId: currentUserId,
+            updatedAt: now,
+          });
+        });
+        commitOperations(ops);
+      }, 0);
+
+      return {
+        ...snapshot,
+        groupMessages: updatedMessages,
+      };
+    });
+  }, [currentUserId, commitOperations]);
 
   const markGroupNotificationsRead: AppContextValue["markGroupNotificationsRead"] = useCallback((groupId) => {
     const snap = stateRef.current;
@@ -1490,6 +1552,8 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     for (const notification of notificationsToDelete) {
       commitOperation(queueFor("notifications", "delete", notification.id));
     }
+    void clearDeliveredPushNotifications();
+    void clearDeliveredLocalNotifications();
   }, [currentUserId, commitOperation]);
 
   const markNotificationsForLinkRead: AppContextValue["markNotificationsForLinkRead"] = useCallback((link) => {
@@ -1510,6 +1574,8 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     for (const notification of changedNotifications) {
       commitOperation(queueFor("notifications", "upsert", notification.id, notification));
     }
+    void clearDeliveredPushNotifications();
+    void clearDeliveredLocalNotifications();
   }, [currentUserId, commitOperation]);
 
   const deleteNotification: AppContextValue["deleteNotification"] = useCallback((notificationId) => {
@@ -1526,11 +1592,8 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   const toggleMuteGroup: AppContextValue["toggleMuteGroup"] = (groupId) => {
     if (!currentUser) return;
     const mutedIds = currentUser.mutedGroupIds ?? [];
-    const isPublicChat = groupId === PUBLIC_CHAT_ID;
-    const isMuted = isPublicChat ? !mutedIds.includes(PUBLIC_CHAT_UNMUTED_ID) : mutedIds.includes(groupId);
-    const nextMutedIds = isPublicChat
-      ? (isMuted ? [...mutedIds, PUBLIC_CHAT_UNMUTED_ID] : mutedIds.filter((id) => id !== PUBLIC_CHAT_UNMUTED_ID))
-      : (isMuted ? mutedIds.filter((id) => id !== groupId) : [...mutedIds, groupId]);
+    const isMuted = mutedIds.includes(groupId);
+    const nextMutedIds = isMuted ? mutedIds.filter((id) => id !== groupId) : [...mutedIds, groupId];
     const updated = { ...currentUser, mutedGroupIds: nextMutedIds, updatedAt: Date.now() };
     setState((snapshot) => ({
       ...snapshot,
@@ -1540,7 +1603,6 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const isGroupMuted: AppContextValue["isGroupMuted"] = (groupId) => {
-    if (groupId === PUBLIC_CHAT_ID) return !(currentUser?.mutedGroupIds ?? []).includes(PUBLIC_CHAT_UNMUTED_ID);
     return currentUser?.mutedGroupIds?.includes(groupId) ?? false;
   };
 
@@ -1625,7 +1687,15 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     const parent = parentCommentId ? (post.comments ?? []).find((item) => item.id === parentCommentId) : undefined;
     if (parentCommentId && !parent) return { ok: false, error: "Comment not found." };
     const now = Date.now();
-    const comment: PostComment = { id: uid("pc"), userId: currentUser.id, content: clean, parentCommentId: parent?.parentCommentId ?? parent?.id, createdAt: now, updatedAt: now };
+    const parentId = parent?.id;
+    const comment: PostComment = {
+      id: uid("pc"),
+      userId: currentUser.id,
+      content: clean,
+      ...(parentId ? { parentCommentId: parentId } : {}),
+      createdAt: now,
+      updatedAt: now,
+    };
     const updated = { ...post, comments: [...(post.comments ?? []), comment], updatedAt: now, dirty: true };
     setState((snapshot) => ({
       ...snapshot,
@@ -1636,13 +1706,31 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       comment,
       updatedAt: now,
     }));
-    if (post.userId !== currentUser.id) {
+    if (!parent && post.userId !== currentUser.id) {
       createNotification(
         post.userId,
         "post_comment",
         "New comment",
         `${currentUser.username} commented: ${clean}`,
-        `/dashboard?post=${post.id}`
+        `/dashboard?post=${post.id}&comment=${comment.id}`
+      );
+    }
+    if (parent && parent.userId !== currentUser.id) {
+      createNotification(
+        parent.userId,
+        "post_reply",
+        "Reply to your comment",
+        `${currentUser.username} replied: ${clean}`,
+        `/dashboard?post=${post.id}&comment=${comment.id}`
+      );
+    }
+    if (parent && post.userId !== currentUser.id && post.userId !== parent.userId) {
+      createNotification(
+        post.userId,
+        "post_reply",
+        "Reply on your post",
+        `${currentUser.username} replied to a comment: ${clean}`,
+        `/dashboard?post=${post.id}&comment=${comment.id}`
       );
     }
     return { ok: true };
@@ -1667,7 +1755,9 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       posts: snapshot.posts.map((item) => item.id === postId ? updated : item),
     }));
     commitOperation(queueFor("posts", "upsert", updated.id, {
-      comments: updated.comments,
+      __op: "updateComment",
+      commentId,
+      content: clean,
       updatedAt: updated.updatedAt,
     }));
     return { ok: true };
@@ -1679,13 +1769,25 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     if (!post) return { ok: false, error: "Post not found." };
     const comment = (post.comments ?? []).find((item) => item.id === commentId);
     if (!comment || (comment.userId !== currentUser.id && post.userId !== currentUser.id)) return { ok: false, error: "Comment not found." };
-    const updated = { ...post, comments: (post.comments ?? []).filter((item) => item.id !== commentId), updatedAt: Date.now(), dirty: true };
+    const deleteIds = new Set<string>([commentId]);
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const item of post.comments ?? []) {
+        if (item.parentCommentId && deleteIds.has(item.parentCommentId) && !deleteIds.has(item.id)) {
+          deleteIds.add(item.id);
+          changed = true;
+        }
+      }
+    }
+    const updated = { ...post, comments: (post.comments ?? []).filter((item) => !deleteIds.has(item.id)), updatedAt: Date.now(), dirty: true };
     setState((snapshot) => ({
       ...snapshot,
       posts: snapshot.posts.map((item) => item.id === postId ? updated : item),
     }));
     commitOperation(queueFor("posts", "upsert", updated.id, {
-      comments: updated.comments,
+      __op: "deleteComment",
+      commentId,
       updatedAt: updated.updatedAt,
     }));
     return { ok: true };
@@ -1718,6 +1820,16 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
 
   const updateTimeFormat: AppContextValue["updateTimeFormat"] = (timeFormat) => {
     setState((snapshot) => ({ ...snapshot, settings: { ...snapshot.settings, timeFormat } }));
+    // Also sync to user document for cross-device consistency
+    if (currentUser) {
+      const updated = { ...currentUser, timeFormat, updatedAt: Date.now() };
+      const operation = queueFor("users", "upsert", currentUser.id, updated);
+      setState((snapshot) => ({
+        ...snapshot,
+        users: snapshot.users.map((user) => user.id === currentUser.id ? updated : user),
+      }));
+      commitOperation(operation);
+    }
   };
 
   const markNotificationsRead: AppContextValue["markNotificationsRead"] = useCallback(() => {
@@ -1739,6 +1851,8 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     for (const notification of changedNotifications) {
       commitOperation(queueFor("notifications", "upsert", notification.id, notification));
     }
+    void clearDeliveredPushNotifications();
+    void clearDeliveredLocalNotifications();
   }, [currentUserId, commitOperation]);
 
   /** Feed posts visible to current user — derived from connections collection */
@@ -1752,14 +1866,10 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
 
   const visibleGroups = useMemo(() => {
     if (!currentUser) return [];
-    const publicChat = makePublicChatGroup(
-      state.users,
-      Math.max(0, ...state.groupMessages.filter((item) => item.groupId === PUBLIC_CHAT_ID).map((item) => item.createdAt))
-    );
-    return [publicChat, ...state.groups]
+    return state.groups
       .filter((group) => group.memberIds.includes(currentUser.id))
       .sort((a, b) => b.updatedAt - a.updatedAt);
-  }, [currentUser, state.groups, state.groupMessages, state.users]);
+  }, [currentUser, state.groups]);
 
   const presenceUserId = currentUser?.id;
   const presenceUsername = currentUser?.username;

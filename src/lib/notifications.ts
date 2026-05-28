@@ -171,7 +171,12 @@ export const cancelTaskReminderNotification = async (id: number) => {
 };
 
 /** Schedule the next midnight notification for unlogged gaps. */
-export const scheduleDailyMidnightNotification = async (enabled: boolean, body?: string) => {
+export const scheduleDailyMidnightNotification = async (
+  enabled: boolean,
+  body?: string,
+  link = "/dashboard",
+  title = "Unlogged Activity Gaps"
+) => {
   const message = body ?? "There are some time slots that you have not kept logs for.";
   if (webMidnightTimer !== undefined) {
     window.clearTimeout(webMidnightTimer);
@@ -195,13 +200,13 @@ export const scheduleDailyMidnightNotification = async (enabled: boolean, body?:
     await LocalNotifications.schedule({
       notifications: [
         {
-          title: "Unlogged Activity Gaps",
+          title,
           body: message,
           id: NOTIFICATION_BASE_ID,
           channelId: CHANNEL_ID,
           smallIcon: "ic_stat_taskmates",
           iconColor: "#2563eb",
-          extra: { type: "unlogged_gaps", link: "/dashboard" },
+          extra: { type: "unlogged_gaps", link },
           schedule: {
             at: next,
             allowWhileIdle: true,
@@ -225,7 +230,7 @@ export const scheduleDailyMidnightNotification = async (enabled: boolean, body?:
     webMidnightTimer = window.setTimeout(() => {
       webMidnightTimer = undefined;
       if ("Notification" in window && Notification.permission === "granted") {
-        new Notification("Unlogged Activity Gaps", { body: message });
+        new Notification(title, { body: message });
       }
     }, delay);
   }

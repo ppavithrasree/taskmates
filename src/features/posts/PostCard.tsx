@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { Clock3, Globe2, Heart, MessageCircle, Pencil, Send, Trash2, Users } from "lucide-react";
 import { toast } from "sonner";
-import type { Post, Visibility } from "@/types";
+import type { Post, PostComment, Visibility } from "@/types";
 import { useApp } from "@/context/AppContext";
 import { formatTimeRange } from "@/lib/dateTime";
 import { Button } from "@/components/ui/button";
@@ -27,11 +27,22 @@ export const PostCard = ({ post }: { post: Post }) => {
   const [comment, setComment] = useState("");
   const [replyToCommentId, setReplyToCommentId] = useState<string | null>(null);
   const editHistoryRef = useRef(false);
+  const commentInputRef = useRef<HTMLTextAreaElement | null>(null);
   const author = users.find((user) => user.id === post.userId);
   const isMine = currentUser?.id === post.userId;
   const liked = (post.likes ?? []).includes(currentUser?.id ?? "");
   const meta = visibility[post.visibility ?? author?.privacy ?? "public"];
   const Icon = meta.icon;
+  const comments = post.comments ?? [];
+  const replyToComment = replyToCommentId ? comments.find((item) => item.id === replyToCommentId) : undefined;
+  const replyToUser = replyToComment ? users.find((user) => user.id === replyToComment.userId) : undefined;
+  const commentIds = new Set(comments.map((item) => item.id));
+  const commentsByParent = comments.reduce<Record<string, PostComment[]>>((acc, item) => {
+    const key = item.parentCommentId && commentIds.has(item.parentCommentId) ? item.parentCommentId : "__root__";
+    acc[key] = [...(acc[key] ?? []), item];
+    return acc;
+  }, {});
+  Object.values(commentsByParent).forEach((items) => items.sort((left, right) => left.createdAt - right.createdAt));
 
   useEffect(() => {
     if (!editOpen || editHistoryRef.current) return;
@@ -89,8 +100,97 @@ export const PostCard = ({ post }: { post: Post }) => {
     setDeleteCommentId(null);
   };
 
+  const renderComment = (item: PostComment, depth = 0) => {
+    const commenter = users.find((user) => user.id === item.userId);
+    const parentComment = item.parentCommentId ? comments.find((parent) => parent.id === item.parentCommentId) : undefined;
+    const parentCommenter = parentComment ? users.find((user) => user.id === parentComment.userId) : undefined;
+    const canDelete = currentUser?.id === item.userId || currentUser?.id === post.userId;
+    const canEdit = currentUser?.id === item.userId;
+    const childComments = commentsByParent[item.id] ?? [];
+    return (
+      <div key={item.id} className={depth > 0 ? "ml-4 border-l border-border/70 pl-3" : ""}>
+        <div id={`comment-${item.id}`} className="rounded-lg border border-primary/10 bg-gradient-soft px-3 py-2 text-sm dark:border-primary/15">
+          <div className="mb-1 flex items-center justify-between gap-2">
+            <Link to={commenter ? `/profile/${commenter.username}` : "#"} className="truncate text-xs font-black text-primary">
+              {commenter?.username ?? "unknown"}
+            </Link>
+            <div className="flex shrink-0 items-center gap-2">
+              {canEdit && (
+                <button
+                  type="button"
+                  className="text-muted-foreground"
+                  onClick={() => {
+                    setEditingCommentId(item.id);
+                    setEditingComment(item.content);
+                  }}
+                  aria-label="Edit comment"
+                >
+                  <Pencil className="size-3.5" />
+                </button>
+              )}
+              <button
+                type="button"
+                className="text-xs font-bold text-primary"
+                onClick={() => {
+                  setReplyToCommentId(item.id);
+                  window.requestAnimationFrame(() => commentInputRef.current?.focus());
+                }}
+              >
+                Reply
+              </button>
+              {canDelete && (
+                <button
+                  type="button"
+                  className="text-muted-foreground"
+                  onClick={() => setDeleteCommentId(item.id)}
+                  aria-label="Delete comment"
+                >
+                  <Trash2 className="size-3.5" />
+                </button>
+              )}
+            </div>
+          </div>
+          {editingCommentId === item.id ? (
+            <form onSubmit={saveComment} className="space-y-2">
+              <textarea
+                value={editingComment}
+                onChange={(event) => setEditingComment(event.target.value)}
+                rows={2}
+                maxLength={1000}
+                className="min-h-16 w-full resize-y rounded-lg border border-input bg-background px-3 py-2 text-sm"
+              />
+              <div className="flex justify-end gap-2">
+                <Button type="button" size="sm" variant="ghost" onClick={() => setEditingCommentId(null)}>Cancel</Button>
+                <Button type="submit" size="sm">Save</Button>
+              </div>
+            </form>
+          ) : (
+            <>
+              {parentComment && (
+                <button
+                  type="button"
+                  className="mb-1 block w-full rounded border-l-2 border-primary bg-background/70 px-2 py-1 text-left text-xs text-muted-foreground"
+                  onClick={() => setReplyToCommentId(parentComment.id)}
+                >
+                  <span className="block truncate font-black text-primary">{parentCommenter?.username ?? "unknown"}</span>
+                  <span className="block truncate">{parentComment.content}</span>
+                </button>
+              )}
+              <p className="whitespace-pre-wrap break-words">{item.content}</p>
+            </>
+          )}
+        </div>
+        {childComments.length > 0 && (
+          <div className="mt-2 space-y-2">
+            {childComments.map((child) => renderComment(child, depth + 1))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
-    <article className="tap-lift animate-fade-in-up overflow-hidden rounded-lg border border-border bg-card shadow-soft">
+    <article id={`post-${post.id}`} className="tap-lift animate-fade-in-up overflow-hidden rounded-lg border border-border bg-card shadow-soft">
       <div className="h-1 bg-gradient-primary" />
       <div className="p-4">
       <header className="mb-4 flex items-start justify-between gap-3">
@@ -108,13 +208,13 @@ export const PostCard = ({ post }: { post: Post }) => {
           {meta.label}
         </span>
       </header>
-
+ 
       <div className="mb-3 flex items-center gap-2 rounded-lg bg-muted px-3 py-2 text-sm font-semibold">
         <Clock3 className="size-4 text-primary" />
         {formatTimeRange(post.startTime, post.endTime, settings.timeFormat)}
       </div>
       <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-foreground">{post.content}</p>
-
+ 
       <section className="mt-4 space-y-3 border-t border-border pt-3">
         <div className="flex flex-wrap items-center gap-2">
           <Button
@@ -127,9 +227,9 @@ export const PostCard = ({ post }: { post: Post }) => {
               if (!result.ok) toast.error(result.error);
             }}
           >
-            <Heart className={liked ? "mr-1 size-4 fill-current" : "mr-1 size-4"} /> {liked ? "Liked" : "Like"}
+            <Heart className={liked ? "mr-1 size-4 fill-current text-rose-500" : "mr-1 size-4"} /> {liked ? "Liked" : "Like"}
           </Button>
-          <button type="button" className="text-xs font-bold text-primary underline-offset-2 hover:underline" onClick={() => setLikesOpen(true)}>
+          <button type="button" className="text-xs font-bold text-primary underline-offset-2" onClick={() => setLikesOpen(true)}>
             {(post.likes ?? []).length} likes
           </button>
           <span className="text-xs font-bold text-muted-foreground">-</span>
@@ -137,100 +237,25 @@ export const PostCard = ({ post }: { post: Post }) => {
             <MessageCircle className="size-3.5" /> {(post.comments ?? []).length} comments
           </span>
         </div>
-
+ 
         <div className="space-y-2">
           <p className="flex items-center gap-1.5 text-xs font-black uppercase text-muted-foreground">
             <MessageCircle className="size-3.5" /> Comments
           </p>
-          {(post.comments ?? []).length === 0 ? (
+          {comments.length === 0 ? (
             <p className="text-xs text-muted-foreground">No comments yet.</p>
           ) : (
-            (post.comments ?? []).map((item) => {
-              const commenter = users.find((user) => user.id === item.userId);
-              const parentComment = item.parentCommentId ? (post.comments ?? []).find((parent) => parent.id === item.parentCommentId) : undefined;
-              const parentCommenter = parentComment ? users.find((user) => user.id === parentComment.userId) : undefined;
-              const canDelete = currentUser?.id === item.userId || currentUser?.id === post.userId;
-              const canEdit = currentUser?.id === item.userId;
-              return (
-                <div key={item.id} className={`rounded-lg border border-primary/10 bg-gradient-soft px-3 py-2 text-sm dark:border-primary/15 ${item.parentCommentId ? "ml-5" : ""}`}>
-                  <div className="mb-1 flex items-center justify-between gap-2">
-                    <Link to={commenter ? `/profile/${commenter.username}` : "#"} className="truncate text-xs font-black text-primary">
-                      {commenter?.username ?? "unknown"}
-                    </Link>
-                    <div className="flex shrink-0 items-center gap-2">
-                      {canEdit && (
-                        <button
-                          type="button"
-                          className="text-muted-foreground hover:text-primary"
-                          onClick={() => {
-                            setEditingCommentId(item.id);
-                            setEditingComment(item.content);
-                          }}
-                          aria-label="Edit comment"
-                        >
-                          <Pencil className="size-3.5" />
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        className="text-xs font-bold text-primary hover:text-accent"
-                        onClick={() => setReplyToCommentId(item.id)}
-                      >
-                        Reply
-                      </button>
-                      {canDelete && (
-                        <button
-                          type="button"
-                          className="text-muted-foreground hover:text-destructive"
-                          onClick={() => setDeleteCommentId(item.id)}
-                          aria-label="Delete comment"
-                        >
-                          <Trash2 className="size-3.5" />
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                  {editingCommentId === item.id ? (
-                    <form onSubmit={saveComment} className="space-y-2">
-                      <textarea
-                        value={editingComment}
-                        onChange={(event) => setEditingComment(event.target.value)}
-                        rows={2}
-                        maxLength={1000}
-                        className="min-h-16 w-full resize-y rounded-lg border border-input bg-background px-3 py-2 text-sm"
-                      />
-                      <div className="flex justify-end gap-2">
-                        <Button type="button" size="sm" variant="ghost" onClick={() => setEditingCommentId(null)}>Cancel</Button>
-                        <Button type="submit" size="sm">Save</Button>
-                      </div>
-                    </form>
-                  ) : (
-                    <>
-                      {parentComment && (
-                        <button
-                          type="button"
-                          className="mb-1 block w-full rounded border-l-2 border-primary bg-background/70 px-2 py-1 text-left text-xs text-muted-foreground"
-                          onClick={() => setReplyToCommentId(parentComment.id)}
-                        >
-                          <span className="block truncate font-black text-primary">{parentCommenter?.username ?? "unknown"}</span>
-                          <span className="block truncate">{parentComment.content}</span>
-                        </button>
-                      )}
-                      <p className="whitespace-pre-wrap break-words">{item.content}</p>
-                    </>
-                  )}
-                </div>
-              );
-            })
+            commentsByParent.__root__?.map((item) => renderComment(item))
           )}
           <form onSubmit={submitComment} className="relative flex items-end gap-2 pt-12">
-            {replyToCommentId && (
+            {replyToComment && (
               <div className="absolute left-0 right-0 -top-12 rounded-lg border border-border bg-card px-3 py-2 text-xs shadow-soft">
-                Replying to {users.find((user) => user.id === (post.comments ?? []).find((item) => item.id === replyToCommentId)?.userId)?.username ?? "comment"}
+                Replying to @{replyToUser?.username ?? "comment"}
                 <button type="button" className="ml-2 font-bold text-primary" onClick={() => setReplyToCommentId(null)}>Cancel</button>
               </div>
             )}
             <textarea
+              ref={commentInputRef}
               value={comment}
               onChange={(event) => setComment(event.target.value)}
               rows={1}
@@ -247,8 +272,8 @@ export const PostCard = ({ post }: { post: Post }) => {
 
       {isMine && (
         <footer className="mt-4 flex gap-1 border-t border-border pt-3">
-          <Button size="sm" variant="ghost" onClick={() => setEditOpen(true)}><Pencil className="mr-1 size-3.5" /> Edit</Button>
-          <Button size="sm" variant="ghost" className="text-destructive" onClick={() => setConfirmOpen(true)}><Trash2 className="mr-1 size-3.5" /> Delete</Button>
+          <Button size="sm" variant="ghost" onClick={() => setEditOpen(true)} className="text-amber-500"><Pencil className="mr-1 size-3.5" /> Edit</Button>
+          <Button size="sm" variant="ghost" className="text-red-500" onClick={() => setConfirmOpen(true)}><Trash2 className="mr-1 size-3.5" /> Delete</Button>
         </footer>
       )}
 

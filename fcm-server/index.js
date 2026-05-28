@@ -54,8 +54,8 @@ app.get("/", (_req, res) => {
  *
  * Looks up the recipient's FCM tokens from Firestore and sends
  * a high-priority push notification via FCM.
- * For group messages with data.messageId, successful push fanout marks the
- * message as delivered for that recipient.
+ * Group message delivery receipts are written only by the receiving app after
+ * the device actually receives the push, or by the web client when it syncs.
  */
 app.post("/api/send-notification", authenticate, async (req, res) => {
   try {
@@ -126,19 +126,6 @@ app.post("/api/send-notification", authenticate, async (req, res) => {
     );
 
     const sent = results.filter((r) => r.status === "fulfilled").length;
-    if (type === "group_message" && data?.messageId && sent > 0) {
-      const messageRef = db.collection("groupMessages").doc(String(data.messageId));
-      const snap = await messageRef.get();
-      if (snap.exists) {
-        const message = snap.data() || {};
-        if (Array.isArray(message.recipientIds) && message.recipientIds.includes(recipientId)) {
-          await messageRef.set({
-            deliveredTo: admin.firestore.FieldValue.arrayUnion(recipientId),
-            updatedAt: Date.now(),
-          }, { merge: true });
-        }
-      }
-    }
     console.log(`Sent ${sent}/${tokens.length} FCM pushes for ${type} to ${recipientId}`);
 
     res.json({ sent, total: tokens.length });

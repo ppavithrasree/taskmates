@@ -59,7 +59,7 @@ const Friends = () => {
                       timeFormat={settings.timeFormat}
                       action={
                         status === "none" ? (
-                          <Button size="sm" onClick={() => request(user.id)}>
+                          <Button size="sm" onClick={() => request(user.id)} className="bg-teal-600 text-white hover:bg-teal-700 dark:bg-teal-500 dark:text-teal-950 dark:hover:bg-teal-400">
                             <UserPlus className="mr-1 size-4" /> Add
                           </Button>
                         ) : status === "outgoing" ? (
@@ -76,7 +76,12 @@ const Friends = () => {
 
         {incoming.length > 0 && (
           <section className="space-y-2">
-            <h2 className="text-xl font-black">Requests</h2>
+            <h2 className="text-xl font-black flex items-center gap-2">
+              Requests
+              <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-purple-500 px-1.5 text-[11px] font-black text-white">
+                {incoming.length}
+              </span>
+            </h2>
             {incoming.map((connection) => {
               const sender = users.find((user) => user.id === connection.senderId);
               if (!sender) return null;
@@ -89,10 +94,10 @@ const Friends = () => {
                   timeFormat={settings.timeFormat}
                   action={
                     <div className="flex gap-1">
-                      <Button size="icon" variant="outline" onClick={() => respondRequest(connection.id, true)}>
+                      <Button size="icon" variant="outline" onClick={() => respondRequest(connection.id, true)} className="border-emerald-500/30 text-emerald-600 bg-emerald-50 hover:bg-emerald-100 hover:text-emerald-700 dark:border-emerald-500/20 dark:text-emerald-400 dark:bg-emerald-950/20 dark:hover:bg-emerald-950/50">
                         <CheckCircle2 className="size-4" />
                       </Button>
-                      <Button size="icon" variant="outline" onClick={() => respondRequest(connection.id, false)}>
+                      <Button size="icon" variant="outline" onClick={() => respondRequest(connection.id, false)} className="border-red-500/30 text-red-600 bg-red-50 hover:bg-red-100 hover:text-red-700 dark:border-red-500/20 dark:text-red-400 dark:bg-red-950/20 dark:hover:bg-red-950/50">
                         <X className="size-4" />
                       </Button>
                     </div>
@@ -133,9 +138,9 @@ const Friends = () => {
 
 const statusMeta = {
   self: { label: "You", icon: UserRound, tone: "text-primary" },
-  connected: { label: "Connected", icon: CheckCircle2, tone: "text-success" },
-  incoming: { label: "Incoming request", icon: Inbox, tone: "text-accent" },
-  outgoing: { label: "Pending request", icon: Send, tone: "text-accent" },
+  connected: { label: "Connected", icon: CheckCircle2, tone: "text-emerald-500" },
+  incoming: { label: "Incoming request", icon: Inbox, tone: "text-purple-500" },
+  outgoing: { label: "Pending request", icon: Send, tone: "text-amber-500" },
   none: { label: "", icon: UsersRound, tone: "text-muted-foreground" },
 } as const;
 
