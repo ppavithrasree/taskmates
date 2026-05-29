@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { App } from "@capacitor/app";
 import {
   APP_VERSION,
   checkForUpdate,
@@ -8,13 +9,10 @@ import {
   type VersionInfo,
 } from "@/lib/otaUpdate";
 
-const CHECK_INTERVAL_MS = 6 * 3600_000; // Re-check every 6 hours
-
 export const useOtaUpdate = () => {
   const [updateInfo, setUpdateInfo] = useState<VersionInfo | null>(null);
   const [forceRequired, setForceRequired] = useState(false);
   const [checking, setChecking] = useState(false);
-  const checkedRef = useRef(false);
 
   const doCheck = useCallback(async () => {
     setChecking(true);
@@ -29,17 +27,19 @@ export const useOtaUpdate = () => {
     }
   }, []);
 
-  // Check on mount
+  // Check on first mount
   useEffect(() => {
-    if (checkedRef.current) return;
-    checkedRef.current = true;
     doCheck();
   }, [doCheck]);
 
-  // Periodic re-check
+  // Check every time user brings app to foreground
   useEffect(() => {
-    const id = setInterval(doCheck, CHECK_INTERVAL_MS);
-    return () => clearInterval(id);
+    const listener = App.addListener("appStateChange", ({ isActive }) => {
+      if (isActive) doCheck(); // fired when app comes to foreground
+    });
+    return () => {
+      listener.then((l) => l.remove());
+    };
   }, [doCheck]);
 
   const dismiss = useCallback(() => {

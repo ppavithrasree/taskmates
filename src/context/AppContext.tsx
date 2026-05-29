@@ -776,7 +776,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
 
       // Check if we already have a pending delivery sync operation for this message
       const isPending = state.syncQueue.some(
-        (op) => op.collection === "groupMessages" && op.entityId === message.id && (op.payload as any)?.__op === "markDelivered"
+        (op) => op.collection === "groupMessages" && op.entityId === message.id && (op.payload as Record<string, unknown>)?.__op === "markDelivered"
       );
       if (isPending) continue;
 

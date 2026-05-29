@@ -92,11 +92,41 @@ export const clearDismiss = () => {
 
 export const downloadApk = async (url: string) => {
   try {
-    // On Capacitor/Android, open the URL in the system browser to trigger download
-    const { Browser } = await import("@capacitor/browser");
-    await Browser.open({ url });
-  } catch {
-    // Fallback for web
+    const { Filesystem, Directory } = await import("@capacitor/filesystem");
+    const { FileOpener } = await import("@capacitor-community/file-opener");
+    // Fetch the APK as a blob
+    const response = await fetch(url);
+    if (!response.ok) throw new Error("Download failed");
+
+    const blob = await response.blob();
+
+    // Convert blob to base64
+    const base64 = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve((reader.result as string).split(",")[1]);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+
+    // Save APK to device cache
+    const saved = await Filesystem.writeFile({
+      path: "taskmates-update.apk",
+      data: base64,
+      directory: Directory.Cache,
+    });
+
+    // Open APK to trigger Android install prompt
+    await FileOpener.open({
+      filePath: saved.uri,
+      contentType: "application/vnd.android.package-archive",
+      openWithDefault: true,
+    });
+
+    clearDismiss();
+
+  } catch (err) {
+    console.error("APK download/install failed:", err);
+    // Fallback — open browser if everything fails
     window.open(url, "_blank");
   }
 };
