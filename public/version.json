@@ -1,7 +1,7 @@
 {
-  "version": "2.0.1",
-  "minVersion": "2.0.0",
-  "releaseDate": "2026-05-28",
-  "releaseNotes": "Checking the update feature",
-  "apkUrl": "https://github.com/ppavithrasree/taskmates/releases/download/v2.0.1/app-release.apk"
+  "version": "2.0.2",
+  "minVersion": "2.0.1",
+  "releaseDate": "2026-05-29",
+  "releaseNotes": "Checking the update feature again",
+  "apkUrl": "https://github.com/ppavithrasree/taskmates/releases/download/v2.0.2/app-release.apk"
 }

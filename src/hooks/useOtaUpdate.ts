@@ -13,6 +13,8 @@ export const useOtaUpdate = () => {
   const [updateInfo, setUpdateInfo] = useState<VersionInfo | null>(null);
   const [forceRequired, setForceRequired] = useState(false);
   const [checking, setChecking] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState(0);
 
   const doCheck = useCallback(async () => {
     setChecking(true);
@@ -49,7 +51,15 @@ export const useOtaUpdate = () => {
 
   const download = useCallback(async () => {
     if (!updateInfo) return;
-    await downloadApk(updateInfo.apkUrl);
+    setDownloading(true);
+    setDownloadProgress(0);
+    try {
+      await downloadApk(updateInfo.apkUrl, (pct) => {
+        setDownloadProgress(pct);
+      });
+    } finally {
+      setDownloading(false);
+    }
   }, [updateInfo]);
 
   return {
@@ -58,6 +68,8 @@ export const useOtaUpdate = () => {
     updateInfo,
     forceRequired,
     checking,
+    downloading,
+    downloadProgress,
     checkForUpdate: doCheck,
     dismissUpdate: dismiss,
     downloadUpdate: download,

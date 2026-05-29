@@ -1,12 +1,13 @@
 import { ReactNode } from "react";
 import { NavLink, Navigate, useLocation, useNavigate } from "react-router-dom";
-import { Bell, ClipboardList, LayoutDashboard, LogOut, Search, Settings, User, UsersRound, Download } from "lucide-react";
+import { Bell, ClipboardList, LayoutDashboard, LogOut, Search, Settings, User, UsersRound, Download, Loader2 } from "lucide-react";
 import { TaskMateAIProvider } from "@/features/ai/TaskMateAIProvider";
 import { useApp } from "@/context/AppContext";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { useOtaUpdate } from "@/hooks/useOtaUpdate";
+import { toast } from "sonner";
 
 const navItems = [
   { title: "Feed", url: "/dashboard", icon: LayoutDashboard, badgeKey: null, color: "text-teal-500" },
@@ -37,7 +38,15 @@ export const AppShell = ({
   const { currentUser, logout, unreadNotificationCount, pendingRequestCount, unreadGroupCount } = useApp();
   const navigate = useNavigate();
   const location = useLocation();
-  const { forceRequired, updateAvailable, updateInfo, downloadUpdate } = useOtaUpdate();
+  const {
+    forceRequired,
+    updateAvailable,
+    updateInfo,
+    downloadUpdate,
+    downloading,
+    downloadProgress,
+    dismissUpdate,
+  } = useOtaUpdate();
 
   if (!currentUser) return <Navigate to="/login" replace />;
 
@@ -66,12 +75,26 @@ export const AppShell = ({
             {updateAvailable && (
               <Button
                 variant="ghost"
-                size="icon"
-                onClick={downloadUpdate}
+                size={downloading ? "default" : "icon"}
+                disabled={downloading}
+                onClick={async () => {
+                  toast.info("Starting update download...");
+                  await downloadUpdate();
+                }}
                 aria-label="Download update"
-                className="relative size-9 rounded-md bg-gradient-to-r from-amber-500 via-orange-500 to-red-500 text-white animate-pulse shadow-sm"
+                className={cn(
+                  "relative h-9 rounded-md bg-gradient-to-r from-amber-500 via-orange-500 to-red-500 text-white shadow-sm font-bold text-xs transition-all duration-300",
+                  downloading ? "px-3 animate-none" : "size-9 animate-pulse"
+                )}
               >
-                <Download className="size-[18px]" />
+                {downloading ? (
+                  <div className="flex items-center gap-1.5">
+                    <Loader2 className="size-3.5 animate-spin" />
+                    <span>{downloadProgress}%</span>
+                  </div>
+                ) : (
+                  <Download className="size-[18px]" />
+                )}
               </Button>
             )}
             <Button variant="ghost" size="icon" onClick={() => navigate("/notifications")} aria-label="Notifications" className="relative size-9 rounded-md text-amber-500 hover:bg-amber-500/10 hover:text-amber-600 transition-smooth">
@@ -87,6 +110,54 @@ export const AppShell = ({
           </div>
         </div>
       </header>
+
+      {/* ── Prominent Update Available Banner ── */}
+      {updateAvailable && !forceRequired && (
+        <div className="border-b border-amber-500/20 bg-gradient-to-r from-amber-500/5 via-orange-500/5 to-red-500/5 p-3 sm:px-4">
+          <div className="mx-auto flex max-w-5xl flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-start gap-2.5">
+              <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-amber-500 to-orange-500 text-white shadow-sm">
+                <Download className="size-4 animate-bounce" />
+              </div>
+              <div>
+                <h4 className="text-sm font-bold text-foreground">Update Available (v{updateInfo?.version})</h4>
+                <p className="text-xs text-muted-foreground line-clamp-1">{updateInfo?.releaseNotes || "Bug fixes and improvements"}</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 self-end sm:self-auto">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={dismissUpdate}
+                className="h-8 text-xs font-semibold text-muted-foreground hover:bg-black/5 dark:hover:bg-white/5"
+              >
+                Later
+              </Button>
+              <Button
+                size="sm"
+                disabled={downloading}
+                onClick={async () => {
+                  toast.info("Starting update download...");
+                  await downloadUpdate();
+                }}
+                className="h-8 bg-gradient-primary text-xs font-bold text-white shadow-glow flex items-center gap-1.5"
+              >
+                {downloading ? (
+                  <>
+                    <Loader2 className="size-3 animate-spin" />
+                    <span>Downloading {downloadProgress}%</span>
+                  </>
+                ) : (
+                  <>
+                    <Download className="size-3" />
+                    <span>Update Now</span>
+                  </>
+                )}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Main Content ── */}
       <main key={location.pathname} className={cn("page-transition pb-24", mainClassName)}>{children}</main>
@@ -113,8 +184,19 @@ export const AppShell = ({
                 {updateInfo.releaseNotes}
               </div>
             )}
-            <Button onClick={downloadUpdate} className="h-11 w-full bg-gradient-primary font-bold shadow-glow">
-              Update Now
+            <Button
+              onClick={downloadUpdate}
+              disabled={downloading}
+              className="h-11 w-full bg-gradient-primary font-bold shadow-glow flex items-center justify-center gap-2"
+            >
+              {downloading ? (
+                <>
+                  <Loader2 className="size-4 animate-spin" />
+                  <span>Downloading {downloadProgress}%</span>
+                </>
+              ) : (
+                "Update Now"
+              )}
             </Button>
           </div>
         </DialogContent>

@@ -49,18 +49,33 @@ export const compareSemver = (a: string, b: string): number => {
 };
 
 export const checkForUpdate = async (): Promise<VersionInfo | null> => {
+  console.log("[OTA Update] Checking for updates...");
+  console.log("[OTA Update] VERSION_URL:", VERSION_URL);
+  console.log("[OTA Update] Current APP_VERSION:", APP_VERSION);
   try {
     const response = await fetch(VERSION_URL, { cache: "no-store" });
-    if (!response.ok) return null;
+    console.log("[OTA Update] fetch response status:", response.status);
+    if (!response.ok) {
+      console.warn("[OTA Update] Fetch failed, status not ok");
+      return null;
+    }
     const info: VersionInfo = await response.json();
+    console.log("[OTA Update] Remote version info received:", info);
     const cache = loadCache();
     cache.lastCheck = Date.now();
     cache.latestVersion = info.version;
     saveCache(cache);
     // If remote version > current version, update available
-    if (compareSemver(info.version, APP_VERSION) > 0) return info;
+    const comparison = compareSemver(info.version, APP_VERSION);
+    console.log(`[OTA Update] Comparing remote version ${info.version} with local ${APP_VERSION}: comparison result = ${comparison}`);
+    if (comparison > 0) {
+      console.log("[OTA Update] Update is available!");
+      return info;
+    }
+    console.log("[OTA Update] No update available.");
     return null;
-  } catch {
+  } catch (error) {
+    console.error("[OTA Update] Error during check:", error);
     return null;
   }
 };
@@ -90,43 +105,69 @@ export const clearDismiss = () => {
   saveCache(cache);
 };
 
-export const downloadApk = async (url: string) => {
+export const downloadApk = async (url: string, onProgress?: (pct: number) => void) => {
+  let progressListener: { remove: () => Promise<void> } | null = null;
+  console.log("[OTA Update] downloadApk started for URL:", url);
   try {
     const { Filesystem, Directory } = await import("@capacitor/filesystem");
     const { FileOpener } = await import("@capacitor-community/file-opener");
-    // Fetch the APK as a blob
-    const response = await fetch(url);
-    if (!response.ok) throw new Error("Download failed");
 
-    const blob = await response.blob();
+    if (onProgress) {
+      progressListener = await Filesystem.addListener("progress", (progress) => {
+        if (progress.contentLength > 0) {
+          const pct = Math.round((progress.bytes / progress.contentLength) * 100);
+          console.log(`[OTA Update] Download progress: ${pct}% (${progress.bytes}/${progress.contentLength})`);
+          onProgress(pct);
+        }
+      });
+    }
 
-    // Convert blob to base64
-    const base64 = await new Promise<string>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onloadend = () => resolve((reader.result as string).split(",")[1]);
-      reader.onerror = reject;
-      reader.readAsDataURL(blob);
+    console.log("[OTA Update] Triggering Filesystem.downloadFile");
+    const downloadResult = await Filesystem.downloadFile({
+      url,
+      path: "taskmates-update.apk",
+      directory: Directory.Cache,
+      progress: true,
+      recursive: true,
     });
 
-    // Save APK to device cache
-    const saved = await Filesystem.writeFile({
+    console.log("[OTA Update] Filesystem.downloadFile complete, result:", downloadResult);
+
+    if (!downloadResult.path) {
+      throw new Error("Download completed but path is missing in result");
+    }
+
+    // On Android, we need the file:// URI to pass to FileOpener
+    console.log("[OTA Update] Resolving URI for path:", downloadResult.path);
+    const uriResult = await Filesystem.getUri({
       path: "taskmates-update.apk",
-      data: base64,
       directory: Directory.Cache,
     });
+    console.log("[OTA Update] Resolved URI:", uriResult.uri);
 
     // Open APK to trigger Android install prompt
+    console.log("[OTA Update] Opening APK with FileOpener");
     await FileOpener.open({
-      filePath: saved.uri,
+      filePath: uriResult.uri,
       contentType: "application/vnd.android.package-archive",
       openWithDefault: true,
     });
+    console.log("[OTA Update] FileOpener.open successfully triggered");
 
     clearDismiss();
-
   } catch (err) {
-    console.error("APK download/install failed:", err);
+    console.error("[OTA Update] APK download/install failed:", err);
     // Fallback — open browser if everything fails
+    console.log("[OTA Update] Falling back to opening URL in browser");
     window.open(url, "_blank");
+  } finally {
+    if (progressListener) {
+      try {
+        await progressListener.remove();
+        console.log("[OTA Update] Progress listener removed");
+      } catch (e) {
+        console.error("[OTA Update] Error removing progress listener:", e);
+      }
+    }
   }
 };
