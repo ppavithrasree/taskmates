@@ -491,7 +491,7 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
                   onClick={() => showMessage(item.id)}
                   className="flex max-w-[18rem] shrink-0 items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-left shadow-soft"
                 >
-                  <Pin className="size-3.5 shrink-0 text-amber-500 fill-amber-500" />
+                  <Pin className="size-3.5 shrink-0 fill-warning text-warning" />
                   <span className="min-w-0">
                     <span className="block truncate text-xs font-black">{sender?.username ?? "Unknown"}</span>
                     <span className="block truncate text-xs text-muted-foreground">{messageText(item)}</span>
@@ -617,7 +617,7 @@ const GroupChat = ({ groupId }: { groupId: string }) => {
                             event.stopPropagation();
                             togglePin(item);
                           }}
-                          className="flex size-7 shrink-0 items-center justify-center rounded-full text-amber-500"
+                          className="flex size-7 shrink-0 items-center justify-center rounded-full text-warning"
                           aria-label={pinned ? "Unpin message" : "Pin message"}
                         >
                           {pinned ? <PinOff className="size-4" /> : <Pin className="size-4" />}

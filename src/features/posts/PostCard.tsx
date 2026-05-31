@@ -4,7 +4,7 @@ import { Clock3, Globe2, Heart, MessageCircle, Pencil, Send, Trash2, Users } fro
 import { toast } from "sonner";
 import type { Post, PostComment, Visibility } from "@/types";
 import { useApp } from "@/context/AppContext";
-import { formatTimeRange } from "@/lib/dateTime";
+import { formatClockTime, formatDayAwareDateTime, formatTimeRange } from "@/lib/dateTime";
 import { LinkifiedText } from "@/components/LinkifiedText";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -17,7 +17,7 @@ const visibility: Record<Visibility, { label: string; icon: typeof Globe2; class
   custom: { label: "Custom", icon: Users, classes: "bg-accent-soft text-accent" },
 };
 
-export const PostCard = ({ post }: { post: Post }) => {
+export const PostCard = ({ post, timestampMode = "dayAware" }: { post: Post; timestampMode?: "dayAware" | "timeOnly" }) => {
   const { currentUser, users, settings, deletePost, togglePostLike, addPostComment, updatePostComment, deletePostComment } = useApp();
   const [editOpen, setEditOpen] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -201,7 +201,9 @@ export const PostCard = ({ post }: { post: Post }) => {
           </div>
           <div className="min-w-0">
             <p className="truncate text-sm font-semibold">{author?.username ?? "unknown"}</p>
-            <p className="truncate text-xs text-muted-foreground">{new Date(post.startTime).toLocaleDateString()}</p>
+            <p className="truncate text-xs text-muted-foreground">
+              {timestampMode === "timeOnly" ? formatClockTime(post.createdAt, settings.timeFormat) : formatDayAwareDateTime(post.createdAt, settings.timeFormat)}
+            </p>
           </div>
         </Link>
         <span className={`inline-flex shrink-0 items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-bold uppercase ${meta.classes}`}>
@@ -273,7 +275,7 @@ export const PostCard = ({ post }: { post: Post }) => {
 
       {isMine && (
         <footer className="mt-4 flex gap-1 border-t border-border pt-3">
-          <Button size="sm" variant="ghost" onClick={() => setEditOpen(true)} className="text-amber-500"><Pencil className="mr-1 size-3.5" /> Edit</Button>
+          <Button size="sm" variant="ghost" onClick={() => setEditOpen(true)} className="text-primary"><Pencil className="mr-1 size-3.5" /> Edit</Button>
           <Button size="sm" variant="ghost" className="text-red-500" onClick={() => setConfirmOpen(true)}><Trash2 className="mr-1 size-3.5" /> Delete</Button>
         </footer>
       )}

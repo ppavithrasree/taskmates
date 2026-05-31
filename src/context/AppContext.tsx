@@ -48,6 +48,7 @@ export interface AppContextValue {
   changePassword: (password: string) => AuthResult;
   searchUsers: (query: string) => User[];
   sendRequest: (toId: string) => void;
+  withdrawRequest: (toId: string) => void;
   respondRequest: (requestId: string, accept: boolean) => void;
   deleteConnection: (userId: string) => void;
   getAcceptedConnectionIds: (userId: string) => string[];
@@ -237,6 +238,8 @@ const deriveAcceptedIds = (connections: Connection[], userId: string): string[] 
   return ids;
 };
 
+const uniqueIds = (ids: string[]) => [...new Set(ids.filter(Boolean))];
+
 const postVisibleTo = (post: Post, author: User | undefined, viewer: User, connectedIds: Set<string>) => {
   if (post.deletedAt) return false;
   if (post.userId === viewer.id) return true;
@@ -388,6 +391,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   const midnightScheduleKeyRef = useRef("");
   const stateRef = useRef(state);
   const appActiveRef = useRef(appActive);
+  const lastSeenWriteRef = useRef(0);
   stateRef.current = state;
   appActiveRef.current = appActive;
 
@@ -535,13 +539,40 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     };
   }, []);
 
+  const saveCurrentUserLastSeen = useCallback(() => {
+    const userId = currentUserId;
+    if (!userId) return;
+    const snap = stateRef.current;
+    const user = snap.users.find((item) => item.id === userId);
+    if (!user) return;
+    const now = Date.now();
+    if (now - lastSeenWriteRef.current < 1500) return;
+    lastSeenWriteRef.current = now;
+    const updated = { ...user, lastSeen: now, updatedAt: now };
+    const cache = loadLastSeenCache();
+    cache[user.id] = now;
+    saveLastSeenCache(cache);
+    setState((snapshot) => ({
+      ...snapshot,
+      users: snapshot.users.map((item) => item.id === user.id ? updated : item),
+    }));
+    commitOperation(queueFor("users", "upsert", updated.id, { lastSeen: now, updatedAt: now }));
+  }, [currentUserId, commitOperation]);
+
   useEffect(() => {
-    const onVisibilityChange = () => setAppActive(document.visibilityState === "visible");
+    const onVisibilityChange = () => {
+      const active = document.visibilityState === "visible";
+      if (!active) saveCurrentUserLastSeen();
+      setAppActive(active);
+    };
     document.addEventListener("visibilitychange", onVisibilityChange);
 
     let removeAppState: (() => void) | undefined;
     import("@capacitor/app").then(({ App }) => {
-      App.addListener("appStateChange", ({ isActive }) => setAppActive(isActive)).then((handle) => {
+      App.addListener("appStateChange", ({ isActive }) => {
+        if (!isActive) saveCurrentUserLastSeen();
+        setAppActive(isActive);
+      }).then((handle) => {
         removeAppState = () => handle.remove();
       });
     }).catch(() => undefined);
@@ -550,35 +581,19 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       document.removeEventListener("visibilitychange", onVisibilityChange);
       removeAppState?.();
     };
-  }, []);
+  }, [saveCurrentUserLastSeen]);
 
   useEffect(() => {
-    if (!currentUser || !appActive) return;
-    const saveLastSeen = () => {
-      const now = Date.now();
-      const updated = { ...currentUser, lastSeen: now, updatedAt: now };
-      const cache = loadLastSeenCache();
-      cache[currentUser.id] = now;
-      saveLastSeenCache(cache);
-      setState((snapshot) => ({
-        ...snapshot,
-        users: snapshot.users.map((user) => user.id === currentUser.id ? updated : user),
-      }));
-      commitOperation(queueFor("users", "upsert", updated.id, updated));
-    };
-    const onVisibilityChange = () => {
-      saveLastSeen();
-    };
-    const onOffline = () => saveLastSeen();
-    document.addEventListener("visibilitychange", onVisibilityChange);
-    window.addEventListener("pagehide", saveLastSeen);
+    if (!currentUserId) return;
+    const onPageHide = () => saveCurrentUserLastSeen();
+    const onOffline = () => saveCurrentUserLastSeen();
+    window.addEventListener("pagehide", onPageHide);
     window.addEventListener("offline", onOffline);
     return () => {
-      document.removeEventListener("visibilitychange", onVisibilityChange);
-      window.removeEventListener("pagehide", saveLastSeen);
+      window.removeEventListener("pagehide", onPageHide);
       window.removeEventListener("offline", onOffline);
     };
-  }, [currentUser, appActive, commitOperation]);
+  }, [currentUserId, saveCurrentUserLastSeen]);
 
   // Flush sync queue when online
   useEffect(() => {
@@ -830,10 +845,13 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     return () => window.clearTimeout(timer);
   }, [currentUser?.id, currentUser?.notificationsEnabled, appActive]);
 
-  /** Get accepted connection user IDs from connections collection (single source of truth) */
+  /** Get accepted connection user IDs from the live collection plus denormalized user data for mutual counts. */
   const getAcceptedConnectionIds = useCallback(
-    (userId: string) => deriveAcceptedIds(state.connections, userId),
-    [state.connections]
+    (userId: string) => uniqueIds([
+      ...deriveAcceptedIds(state.connections, userId),
+      ...(state.users.find((user) => user.id === userId)?.connections ?? []),
+    ]),
+    [state.connections, state.users]
   );
 
   const runRetentionCleanup = useCallback(() => {
@@ -1026,17 +1044,17 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   }, [currentUser, appActive, createGapNotificationForDay]);
 
   const register: AppContextValue["register"] = async (username, password, confirmPassword) => {
-    const clean = username.trim().toLowerCase();
+    const clean = username.trim();
+    const authName = clean.toLowerCase();
     if (username !== username.trim() || /\s/.test(username)) return { ok: false, error: "Username cannot contain spaces." };
     if (clean.length < 3 || clean.length > 24) return { ok: false, error: "Username must be 3-24 characters." };
-    if (clean !== username) return { ok: false, error: "Username must use lowercase letters." };
-    if (!/^[a-z0-9_]+$/.test(clean)) return { ok: false, error: "Username can only use lowercase letters, numbers, and underscores." };
+    if (!/^[a-zA-Z0-9_]+$/.test(clean)) return { ok: false, error: "Username can only use letters, numbers, and underscores." };
     if (password.length < 6) return { ok: false, error: "Password must be at least 6 characters." };
     if (/\s/.test(password)) return { ok: false, error: "Password cannot contain spaces." };
     if (password !== confirmPassword) return { ok: false, error: "Passwords do not match." };
 
     // Don't check local state for username — Firebase Auth is the source of truth
-    const email = usernameToEmail(clean);
+    const email = usernameToEmail(authName);
     let firebaseId: string | undefined;
     try {
       if (online) {
@@ -1068,7 +1086,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
 
   const login: AppContextValue["login"] = async (username, password) => {
     const clean = username.trim().toLowerCase();
-    let user = state.users.find((candidate) => candidate.username === clean);
+    let user = state.users.find((candidate) => candidate.username.toLowerCase() === clean);
 
     if (online) {
       try {
@@ -1157,7 +1175,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     if (!clean || !currentUserId) return [];
     const connectedIds = new Set(deriveAcceptedIds(state.connections, currentUserId));
     return state.users
-      .filter((user) => user.username.startsWith(clean) && user.id !== currentUserId && !connectedIds.has(user.id))
+      .filter((user) => user.username.toLowerCase().startsWith(clean) && user.id !== currentUserId && !connectedIds.has(user.id))
       .slice(0, 20);
   }, [currentUserId, state.users, state.connections]);
 
@@ -1189,6 +1207,23 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     commitOperation(operation);
     // Notify the receiver
     createNotification(toId, "connection_request", "New Connection Request", `${currentUser.username} sent you a connection request.`, "/friends");
+  };
+
+  const withdrawRequest: AppContextValue["withdrawRequest"] = (toId) => {
+    if (!currentUser) return;
+    const requestsToDelete = state.connections.filter(
+      (conn) => conn.status === "pending" && conn.senderId === currentUser.id && conn.receiverId === toId
+    );
+    if (requestsToDelete.length === 0) return;
+    const deleteIds = new Set(requestsToDelete.map((conn) => conn.id));
+    setState((snapshot) => ({
+      ...snapshot,
+      connections: snapshot.connections.filter((conn) => !deleteIds.has(conn.id)),
+    }));
+    for (const conn of requestsToDelete) {
+      commitOperation(queueFor("connections", "delete", conn.id));
+    }
+    toast.success("Request withdrawn.");
   };
 
   const deleteConnection: AppContextValue["deleteConnection"] = (userId) => {
@@ -2039,6 +2074,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     changePassword,
     searchUsers,
     sendRequest,
+    withdrawRequest,
     respondRequest,
     deleteConnection,
     getAcceptedConnectionIds,

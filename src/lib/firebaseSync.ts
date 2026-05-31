@@ -291,8 +291,9 @@ export const subscribeFirebaseState = (
     if (closed) return;
     let sentConnections: Connection[] = [];
     let receivedConnections: Connection[] = [];
+    let acceptedConnections: Connection[] = [];
     const emitConnections = () => {
-      const byId = new Map([...sentConnections, ...receivedConnections].map((item) => [item.id, item]));
+      const byId = new Map([...acceptedConnections, ...sentConnections, ...receivedConnections].map((item) => [item.id, item]));
       onData({ connections: [...byId.values()] });
     };
     unsubs = [
@@ -313,6 +314,10 @@ export const subscribeFirebaseState = (
       }, () => undefined),
       onSnapshot(query(collection(services.db, "connections"), where("receiverId", "==", currentUserId)), (snapshot) => {
         receivedConnections = snapshot.docs.map((item) => normalizeEntity<Connection>(item.id, item.data()));
+        emitConnections();
+      }, () => undefined),
+      onSnapshot(query(collection(services.db, "connections"), where("status", "==", "accepted")), (snapshot) => {
+        acceptedConnections = snapshot.docs.map((item) => normalizeEntity<Connection>(item.id, item.data()));
         emitConnections();
       }, () => undefined),
       onSnapshot(query(collection(services.db, "groups"), where("memberIds", "array-contains", currentUserId)), (snapshot) => {

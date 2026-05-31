@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
 const Friends = () => {
-  const { currentUser, users, connections, settings, searchUsers, sendRequest, respondRequest, deleteConnection, getAcceptedConnectionIds, getConnectionStatus, markNotificationsForLinkRead, presenceByUserId } = useApp();
+  const { currentUser, users, connections, settings, searchUsers, sendRequest, withdrawRequest, respondRequest, deleteConnection, getAcceptedConnectionIds, getConnectionStatus, markNotificationsForLinkRead, presenceByUserId } = useApp();
   const [query, setQuery] = useState("");
   const results = useMemo(() => searchUsers(query), [query, searchUsers]);
 
@@ -30,6 +30,10 @@ const Friends = () => {
 
   const removeConnection = (userId: string) => {
     deleteConnection(userId);
+  };
+
+  const withdraw = (userId: string) => {
+    withdrawRequest(userId);
   };
 
   return (
@@ -63,7 +67,9 @@ const Friends = () => {
                             <UserPlus className="mr-1 size-4" /> Add
                           </Button>
                         ) : status === "outgoing" ? (
-                          <span className="text-xs text-muted-foreground">Pending</span>
+                          <Button size="sm" variant="outline" onClick={() => withdraw(user.id)}>
+                            <X className="mr-1 size-4" /> Withdraw
+                          </Button>
                         ) : null
                       }
                     />

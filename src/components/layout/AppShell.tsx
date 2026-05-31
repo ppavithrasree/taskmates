@@ -13,7 +13,7 @@ const navItems = [
   { title: "Feed", url: "/dashboard", icon: LayoutDashboard, badgeKey: null, color: "text-teal-500" },
   { title: "Search", url: "/friends", icon: Search, badgeKey: "pendingRequestCount" as const, color: "text-purple-500" },
   { title: "Groups", url: "/groups", icon: UsersRound, badgeKey: "unreadGroupCount" as const, color: "text-emerald-500" },
-  { title: "Profile", url: "/profile", icon: User, badgeKey: null, color: "text-amber-500" },
+  { title: "Profile", url: "/profile", icon: User, badgeKey: null, color: "text-warning" },
   { title: "Settings", url: "/settings", icon: Settings, badgeKey: null, color: "text-slate-500" },
 ];
 
@@ -83,7 +83,7 @@ export const AppShell = ({
                 }}
                 aria-label="Download update"
                 className={cn(
-                  "relative h-9 rounded-md bg-gradient-to-r from-amber-500 via-orange-500 to-red-500 text-white shadow-sm font-bold text-xs transition-all duration-300",
+                  "relative h-9 rounded-md bg-warning text-warning-foreground shadow-sm font-bold text-xs transition-all duration-300",
                   downloading ? "px-3 animate-none" : "size-9 animate-pulse"
                 )}
               >
@@ -97,7 +97,7 @@ export const AppShell = ({
                 )}
               </Button>
             )}
-            <Button variant="ghost" size="icon" onClick={() => navigate("/notifications")} aria-label="Notifications" className="relative size-9 rounded-md text-amber-500 hover:bg-amber-500/10 hover:text-amber-600 transition-smooth">
+            <Button variant="ghost" size="icon" onClick={() => navigate("/notifications")} aria-label="Notifications" className="relative size-9 rounded-md text-warning hover:bg-warning/10 hover:text-warning transition-smooth">
               <Bell className="size-[18px]" />
               <Badge count={unreadNotificationCount} />
             </Button>
@@ -113,10 +113,10 @@ export const AppShell = ({
 
       {/* ── Prominent Update Available Banner ── */}
       {updateAvailable && !forceRequired && (
-        <div className="border-b border-amber-500/20 bg-gradient-to-r from-amber-500/5 via-orange-500/5 to-red-500/5 p-3 sm:px-4">
+        <div className="border-b border-warning/20 bg-warning/5 p-3 sm:px-4">
           <div className="mx-auto flex max-w-5xl flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-start gap-2.5">
-              <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-amber-500 to-orange-500 text-white shadow-sm">
+              <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg bg-warning text-warning-foreground shadow-sm">
                 <Download className="size-4 animate-bounce" />
               </div>
               <div>

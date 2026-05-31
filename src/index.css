@@ -36,9 +36,9 @@
     --destructive: 0 72% 52%;
     --destructive-foreground: 0 0% 100%;
 
-    --warning: 38 92% 50%;
+    --warning: 36 74% 43%;
     --warning-foreground: 0 0% 100%;
-    --warning-soft: 38 92% 92%;
+    --warning-soft: 39 72% 91%;
 
     --info: 217 91% 60%;
     --info-foreground: 0 0% 100%;
@@ -50,8 +50,8 @@
 
     --radius: 0.75rem;
 
-    --gradient-primary: linear-gradient(135deg, hsl(196 84% 44%), hsl(274 82% 61%), hsl(151 64% 40%), hsl(12 85% 58%));
-    --gradient-soft: linear-gradient(135deg, hsl(196 88% 93%), hsl(275 86% 95%), hsl(151 67% 93%), hsl(12 90% 94%));
+    --gradient-primary: linear-gradient(135deg, hsl(196 84% 44%), hsl(274 70% 58%), hsl(151 64% 40%), hsl(36 74% 43%));
+    --gradient-soft: linear-gradient(135deg, hsl(196 88% 93%), hsl(275 78% 95%), hsl(151 67% 93%), hsl(39 72% 93%));
     --gradient-mesh: radial-gradient(42% 46% at 10% 3%, hsl(196 88% 92%) 0%, transparent 66%),
       radial-gradient(52% 50% at 95% 10%, hsl(275 86% 92%) 0%, transparent 62%),
       radial-gradient(44% 40% at 55% 95%, hsl(151 67% 90%) 0%, transparent 70%),
@@ -97,9 +97,9 @@
     --destructive: 0 84% 66%;
     --destructive-foreground: 0 0% 100%;
 
-    --warning: 38 92% 60%;
+    --warning: 38 76% 64%;
     --warning-foreground: 232 36% 9%;
-    --warning-soft: 38 40% 16%;
+    --warning-soft: 38 34% 18%;
 
     --info: 217 91% 68%;
     --info-foreground: 232 36% 9%;
@@ -109,8 +109,8 @@
     --input: 228 18% 20%;
     --ring: 191 88% 58%;
 
-    --gradient-primary: linear-gradient(135deg, hsl(191 88% 58%), hsl(280 88% 72%), hsl(152 70% 52%), hsl(12 90% 64%));
-    --gradient-soft: linear-gradient(135deg, hsl(193 54% 16%), hsl(279 48% 20%), hsl(151 40% 16%), hsl(12 50% 18%));
+    --gradient-primary: linear-gradient(135deg, hsl(191 88% 58%), hsl(280 72% 70%), hsl(152 70% 52%), hsl(38 76% 64%));
+    --gradient-soft: linear-gradient(135deg, hsl(193 54% 16%), hsl(279 42% 20%), hsl(151 40% 16%), hsl(38 34% 18%));
     --gradient-mesh: radial-gradient(40% 44% at 12% 4%, hsl(193 54% 16%) 0%, transparent 64%),
       radial-gradient(50% 46% at 90% 8%, hsl(279 48% 20%) 0%, transparent 62%),
       radial-gradient(42% 44% at 50% 96%, hsl(151 40% 16%) 0%, transparent 70%),

@@ -236,7 +236,7 @@ const Dashboard = () => {
                       <span className="ml-auto text-xs font-bold text-muted-foreground">{day.posts.length} posts</span>
                     </div>
                     <div className="space-y-3">
-                      {day.posts.map((post) => <PostCard key={post.id} post={post} />)}
+                      {day.posts.map((post) => <PostCard key={post.id} post={post} timestampMode="timeOnly" />)}
                     </div>
                   </section>
                 ))
@@ -312,7 +312,9 @@ const LatestUserPost = ({ post, author, presence, timeFormat, onOpen }: { post: 
         <Clock3 className="size-4" />
         {formatTimeRange(post.startTime, post.endTime, timeFormat)}
       </div>
-      <LinkifiedText text={post.content} className="line-clamp-2 block text-sm leading-relaxed text-foreground/80" />
+      <div className="max-h-[2.75rem] overflow-hidden">
+        <LinkifiedText text={post.content} className="line-clamp-2 block text-sm leading-relaxed text-foreground/80" />
+      </div>
       <p className="text-xs font-bold text-primary">View all posts →</p>
     </div>
   </button>
