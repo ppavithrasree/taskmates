@@ -275,7 +275,7 @@ export const PostCard = ({ post, timestampMode = "dayAware" }: { post: Post; tim
 
       {isMine && (
         <footer className="mt-4 flex gap-1 border-t border-border pt-3">
-          <Button size="sm" variant="ghost" onClick={() => setEditOpen(true)} className="text-primary"><Pencil className="mr-1 size-3.5" /> Edit</Button>
+          <Button size="sm" variant="ghost" onClick={() => setEditOpen(true)} className="text-warning hover:bg-warning/10 hover:text-warning"><Pencil className="mr-1 size-3.5" /> Edit</Button>
           <Button size="sm" variant="ghost" className="text-red-500" onClick={() => setConfirmOpen(true)}><Trash2 className="mr-1 size-3.5" /> Delete</Button>
         </footer>
       )}
